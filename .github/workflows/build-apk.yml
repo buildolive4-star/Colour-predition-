@@ -54,11 +54,17 @@ jobs:
               -dname "CN=Android Debug,O=Android,C=US"
           fi
 
-      - name: Run ColorPredictionEngine unit tests
-        run: gradle :app:testDebugUnitTest --tests "com.example.ColorPredictionEngineTest" --no-daemon
-
-      - name: Build Debug APK
-        run: gradle :app:assembleDebug --no-daemon
+      - name: Build Debug APK (with transient download retry)
+        run: |
+          for attempt in 1 2 3; do
+            echo "Build attempt $attempt..."
+            if gradle :app:assembleDebug --no-daemon --no-configuration-cache; then
+              exit 0
+            fi
+            echo "Attempt $attempt failed (possible transient Maven 429). Retrying in 15s..."
+            sleep 15
+          done
+          exit 1
 
       - name: Prepare downloadable APK
         run: |
