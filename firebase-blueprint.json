@@ -1,0 +1,435 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Private authenticated user profile, virtual coin wallet summary, statistics, and notification preferences.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the user."
+        },
+        "displayName": {
+          "type": "string",
+          "description": "User display name shown in app."
+        },
+        "email": {
+          "type": "string",
+          "description": "Private user email address (owner-only)."
+        },
+        "publicUserId": {
+          "type": "string",
+          "description": "Human-friendly unique ChromaPulse player ID."
+        },
+        "photoUrl": {
+          "type": "string",
+          "description": "Optional Google profile photo URL."
+        },
+        "virtualCoins": {
+          "type": "integer",
+          "description": "Current virtual coin balance (entertainment only, no cash value)."
+        },
+        "totalGames": {
+          "type": "integer",
+          "description": "Total virtual prediction rounds entered."
+        },
+        "totalWins": {
+          "type": "integer",
+          "description": "Total prediction rounds won."
+        },
+        "totalVirtualPoints": {
+          "type": "integer",
+          "description": "Cumulative virtual points earned for leaderboard ranking."
+        },
+        "currentStreak": {
+          "type": "integer",
+          "description": "Current consecutive win streak."
+        },
+        "bestStreak": {
+          "type": "integer",
+          "description": "Highest consecutive win streak achieved."
+        },
+        "lastDailyBonusDate": {
+          "type": "string",
+          "description": "Optional YYYY-MM-DD UTC date string when daily bonus was last claimed."
+        },
+        "notifyResults": {
+          "type": "boolean",
+          "description": "Whether round result notifications are enabled."
+        },
+        "notifyRoundClosing": {
+          "type": "boolean",
+          "description": "Whether round closing alerts are enabled."
+        },
+        "notifyBonuses": {
+          "type": "boolean",
+          "description": "Whether daily bonus and reward notifications are enabled."
+        },
+        "accountStatus": {
+          "type": "string",
+          "enum": ["ACTIVE"],
+          "description": "Account standing."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of account creation (FieldValue.serverTimestamp())."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last profile or wallet update (FieldValue.serverTimestamp())."
+        }
+      },
+      "required": [
+        "userId",
+        "displayName",
+        "email",
+        "publicUserId",
+        "virtualCoins",
+        "totalGames",
+        "totalWins",
+        "totalVirtualPoints",
+        "currentStreak",
+        "bestStreak",
+        "notifyResults",
+        "notifyRoundClosing",
+        "notifyBonuses",
+        "accountStatus",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Prediction": {
+      "title": "Prediction",
+      "description": "A user's virtual-coin color prediction for a specific timed game period.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Owner Firebase Auth UID."
+        },
+        "modeId": {
+          "type": "string",
+          "enum": ["mode_30s", "mode_60s", "mode_3m", "mode_5m"],
+          "description": "Identifier for the timed game mode."
+        },
+        "periodId": {
+          "type": "string",
+          "description": "Canonical epoch-aligned period identifier."
+        },
+        "selectedColor": {
+          "type": "string",
+          "enum": ["RED", "GREEN", "VIOLET"],
+          "description": "Color chosen by the player."
+        },
+        "stakeCoins": {
+          "type": "integer",
+          "description": "Virtual coins staked on this round."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["PENDING", "WON", "LOST"],
+          "description": "Lifecycle state of the prediction."
+        },
+        "winningColor": {
+          "type": "string",
+          "enum": ["RED", "GREEN", "VIOLET"],
+          "description": "Optional winning color once settled."
+        },
+        "rewardCoins": {
+          "type": "integer",
+          "description": "Virtual coins awarded upon winning."
+        },
+        "resultHash": {
+          "type": "string",
+          "description": "Optional SHA-256 verification hash of the settled round."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of submission (FieldValue.serverTimestamp())."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of settlement (FieldValue.serverTimestamp())."
+        }
+      },
+      "required": [
+        "userId",
+        "modeId",
+        "periodId",
+        "selectedColor",
+        "stakeCoins",
+        "status",
+        "rewardCoins",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "WalletTransaction": {
+      "title": "WalletTransaction",
+      "description": "Immutable virtual coin wallet ledger record.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Owner Firebase Auth UID."
+        },
+        "txType": {
+          "type": "string",
+          "enum": ["WELCOME_BONUS", "DAILY_BONUS", "PREDICTION_ENTRY", "PREDICTION_REWARD", "PROMO_BONUS"],
+          "description": "Transaction category."
+        },
+        "amount": {
+          "type": "integer",
+          "description": "Signed virtual coin delta."
+        },
+        "previousBalance": {
+          "type": "integer",
+          "description": "Virtual coin balance before transaction."
+        },
+        "newBalance": {
+          "type": "integer",
+          "description": "Virtual coin balance after transaction."
+        },
+        "referenceId": {
+          "type": "string",
+          "description": "Idempotent reference identifier (period ID or bonus date)."
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable transaction summary."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of transaction creation (FieldValue.serverTimestamp())."
+        }
+      },
+      "required": [
+        "userId",
+        "txType",
+        "amount",
+        "previousBalance",
+        "newBalance",
+        "referenceId",
+        "description",
+        "createdAt"
+      ]
+    },
+    "UserNotification": {
+      "title": "UserNotification",
+      "description": "In-app real-time notification for round results, bonuses, and announcements.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Recipient Firebase Auth UID."
+        },
+        "category": {
+          "type": "string",
+          "enum": ["ROUND_RESULT", "REWARD", "DAILY_BONUS", "ANNOUNCEMENT"],
+          "description": "Notification type."
+        },
+        "title": {
+          "type": "string",
+          "description": "Short notification title."
+        },
+        "message": {
+          "type": "string",
+          "description": "Notification body message."
+        },
+        "referenceId": {
+          "type": "string",
+          "description": "Optional related round or transaction reference."
+        },
+        "read": {
+          "type": "boolean",
+          "description": "Whether the notification has been read."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of creation (FieldValue.serverTimestamp())."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of update (FieldValue.serverTimestamp())."
+        }
+      },
+      "required": [
+        "userId",
+        "category",
+        "title",
+        "message",
+        "read",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "GameRound": {
+      "title": "GameRound",
+      "description": "Immutable cryptographically verifiable completed round result shared across players.",
+      "type": "object",
+      "properties": {
+        "modeId": {
+          "type": "string",
+          "enum": ["mode_30s", "mode_60s", "mode_3m", "mode_5m"],
+          "description": "Game duration mode identifier."
+        },
+        "periodId": {
+          "type": "string",
+          "description": "Canonical period identifier."
+        },
+        "startTimeMs": {
+          "type": "integer",
+          "description": "UTC epoch start time in milliseconds."
+        },
+        "endTimeMs": {
+          "type": "integer",
+          "description": "UTC epoch closing time in milliseconds."
+        },
+        "winningColor": {
+          "type": "string",
+          "enum": ["RED", "GREEN", "VIOLET"],
+          "description": "Deterministic verifiable winning color."
+        },
+        "resultDigit": {
+          "type": "integer",
+          "description": "Verifiable digit 0-9 derived from SHA-256 hash."
+        },
+        "resultHash": {
+          "type": "string",
+          "description": "SHA-256 cryptographic verification hash."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["COMPLETED"],
+          "description": "Round lifecycle status."
+        },
+        "visibility": {
+          "type": "string",
+          "enum": ["PUBLIC"],
+          "description": "Explicit visibility marker for secure list queries."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of round recording (FieldValue.serverTimestamp())."
+        }
+      },
+      "required": [
+        "modeId",
+        "periodId",
+        "startTimeMs",
+        "endTimeMs",
+        "winningColor",
+        "resultDigit",
+        "resultHash",
+        "status",
+        "visibility",
+        "createdAt"
+      ]
+    },
+    "LeaderboardEntry": {
+      "title": "LeaderboardEntry",
+      "description": "Non-PII public player ranking record for virtual points leaderboard.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Owner Firebase Auth UID."
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Public display name."
+        },
+        "publicUserId": {
+          "type": "string",
+          "description": "Public player tag."
+        },
+        "photoUrl": {
+          "type": "string",
+          "description": "Optional public avatar URL."
+        },
+        "totalVirtualPoints": {
+          "type": "integer",
+          "description": "Cumulative virtual points."
+        },
+        "totalGames": {
+          "type": "integer",
+          "description": "Total completed games."
+        },
+        "totalWins": {
+          "type": "integer",
+          "description": "Total won games."
+        },
+        "bestStreak": {
+          "type": "integer",
+          "description": "Best consecutive win streak."
+        },
+        "badgeTitle": {
+          "type": "string",
+          "description": "Achievement rank title."
+        },
+        "visibility": {
+          "type": "string",
+          "enum": ["PUBLIC"],
+          "description": "Explicit visibility marker for secure list queries."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of creation (FieldValue.serverTimestamp())."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last update (FieldValue.serverTimestamp())."
+        }
+      },
+      "required": [
+        "userId",
+        "displayName",
+        "publicUserId",
+        "totalVirtualPoints",
+        "totalGames",
+        "totalWins",
+        "bestStreak",
+        "badgeTitle",
+        "visibility",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Private user account, virtual coin balance, stats, and preferences."
+    },
+    "/users/{userId}/predictions/{predictionId}": {
+      "schema": { "$ref": "#/entities/Prediction" },
+      "description": "User-owned virtual color predictions keyed by modeId_periodId."
+    },
+    "/users/{userId}/wallet_transactions/{txId}": {
+      "schema": { "$ref": "#/entities/WalletTransaction" },
+      "description": "Immutable virtual coin wallet ledger for each user."
+    },
+    "/users/{userId}/notifications/{notificationId}": {
+      "schema": { "$ref": "#/entities/UserNotification" },
+      "description": "User-scoped real-time notifications."
+    },
+    "/game_rounds/{roundId}": {
+      "schema": { "$ref": "#/entities/GameRound" },
+      "description": "Immutable cryptographically verifiable completed game rounds."
+    },
+    "/leaderboard/{userId}": {
+      "schema": { "$ref": "#/entities/LeaderboardEntry" },
+      "description": "Non-PII public leaderboard rankings."
+    }
+  }
+}

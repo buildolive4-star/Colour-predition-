@@ -1,0 +1,25 @@
+<resources>
+    <string name="app_name">ChromaPulse</string>
+    <string name="tagline">Real-Time Virtual Color Prediction Arena</string>
+    <string name="virtual_coins_disclaimer">Virtual Coins Only • Entertainment Mode • No Real-Money Value</string>
+    <string name="sign_in_with_google">Continue with Google</string>
+    <string name="signing_in">Authenticating...</string>
+    <string name="nav_home">Home</string>
+    <string name="nav_game">Arena</string>
+    <string name="nav_history">History</string>
+    <string name="nav_leaderboard">Ranks</string>
+    <string name="nav_profile">Profile</string>
+    <string name="claim_daily_bonus">Claim +500 Coins</string>
+    <string name="daily_bonus_claimed">Daily Bonus Claimed</string>
+    <string name="lock_prediction">Lock Virtual Prediction</string>
+    <string name="round_locked_label">Submissions Locked</string>
+    <string name="already_predicted_label">Prediction Locked for Round</string>
+    <string name="sign_out">Sign Out</string>
+    <string name="cd_app_logo">ChromaPulse Emblem</string>
+    <string name="cd_notifications">Notifications</string>
+    <string name="cd_wallet">Virtual Coin Wallet</string>
+    <string name="cd_back">Navigate Back</string>
+    <string name="cd_hero_banner">ChromaPulse Arena Hero</string>
+    <string name="cd_trophy_banner">Leaderboard Championship Banner</string>
+    <string name="cd_profile_avatar">Player Profile Avatar</string>
+</resources>

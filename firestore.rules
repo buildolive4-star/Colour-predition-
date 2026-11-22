@@ -1,0 +1,318 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Primitive Helpers ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidModeId(modeId) {
+      return modeId in ['mode_30s', 'mode_60s', 'mode_3m', 'mode_5m'];
+    }
+
+    function isValidColor(color) {
+      return color in ['RED', 'GREEN', 'VIOLET'];
+    }
+
+    // --- Entity Validation Helpers ---
+    function isValidUserProfile(data, userId) {
+      return data.userId == userId &&
+             data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 60 &&
+             data.email is string && data.email.size() <= 120 &&
+             data.publicUserId is string && data.publicUserId.size() >= 4 && data.publicUserId.size() <= 20 &&
+             (!('photoUrl' in data) || (data.photoUrl is string && data.photoUrl.size() <= 500)) &&
+             data.virtualCoins is int && data.virtualCoins >= 0 && data.virtualCoins <= 100000000 &&
+             data.totalGames is int && data.totalGames >= 0 && data.totalGames <= 10000000 &&
+             data.totalWins is int && data.totalWins >= 0 && data.totalWins <= data.totalGames &&
+             data.totalVirtualPoints is int && data.totalVirtualPoints >= 0 && data.totalVirtualPoints <= 100000000 &&
+             data.currentStreak is int && data.currentStreak >= 0 && data.currentStreak <= 100000 &&
+             data.bestStreak is int && data.bestStreak >= 0 && data.bestStreak <= 100000 &&
+             (!('lastDailyBonusDate' in data) || (data.lastDailyBonusDate is string && data.lastDailyBonusDate.size() <= 16)) &&
+             data.notifyResults is bool &&
+             data.notifyRoundClosing is bool &&
+             data.notifyBonuses is bool &&
+             data.accountStatus == 'ACTIVE' &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidPrediction(data, userId) {
+      return data.userId == userId &&
+             data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             isValidModeId(data.modeId) &&
+             data.periodId is string && data.periodId.size() >= 5 && data.periodId.size() <= 40 &&
+             isValidColor(data.selectedColor) &&
+             data.stakeCoins is int && data.stakeCoins >= 10 && data.stakeCoins <= 100000 &&
+             data.status in ['PENDING', 'WON', 'LOST'] &&
+             (!('winningColor' in data) || isValidColor(data.winningColor)) &&
+             data.rewardCoins is int && data.rewardCoins >= 0 && data.rewardCoins <= 500000 &&
+             (!('resultHash' in data) || (data.resultHash is string && data.resultHash.size() >= 8 && data.resultHash.size() <= 128)) &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidWalletTransaction(data, userId) {
+      return data.userId == userId &&
+             data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.txType in ['WELCOME_BONUS', 'DAILY_BONUS', 'PREDICTION_ENTRY', 'PREDICTION_REWARD', 'PROMO_BONUS'] &&
+             data.amount is int && data.amount >= -100000 && data.amount <= 1000000 && data.amount != 0 &&
+             data.previousBalance is int && data.previousBalance >= 0 && data.previousBalance <= 100000000 &&
+             data.newBalance is int && data.newBalance >= 0 && data.newBalance <= 100000000 &&
+             data.newBalance == data.previousBalance + data.amount &&
+             data.referenceId is string && data.referenceId.size() >= 1 && data.referenceId.size() <= 80 &&
+             data.description is string && data.description.size() >= 1 && data.description.size() <= 140 &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidNotification(data, userId) {
+      return data.userId == userId &&
+             data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.category in ['ROUND_RESULT', 'REWARD', 'DAILY_BONUS', 'ANNOUNCEMENT'] &&
+             data.title is string && data.title.size() >= 1 && data.title.size() <= 80 &&
+             data.message is string && data.message.size() >= 1 && data.message.size() <= 240 &&
+             (!('referenceId' in data) || (data.referenceId is string && data.referenceId.size() <= 80)) &&
+             data.read is bool &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidGameRound(data) {
+      return isValidModeId(data.modeId) &&
+             data.periodId is string && data.periodId.size() >= 5 && data.periodId.size() <= 40 &&
+             data.startTimeMs is int && data.startTimeMs > 0 &&
+             data.endTimeMs is int && data.endTimeMs > data.startTimeMs &&
+             isValidColor(data.winningColor) &&
+             data.resultDigit is int && data.resultDigit >= 0 && data.resultDigit <= 9 &&
+             data.resultHash is string && data.resultHash.size() == 64 &&
+             data.status == 'COMPLETED' &&
+             data.visibility == 'PUBLIC' &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidLeaderboardEntry(data, userId) {
+      return data.userId == userId &&
+             data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 60 &&
+             data.publicUserId is string && data.publicUserId.size() >= 4 && data.publicUserId.size() <= 20 &&
+             (!('photoUrl' in data) || (data.photoUrl is string && data.photoUrl.size() <= 500)) &&
+             data.totalVirtualPoints is int && data.totalVirtualPoints >= 0 && data.totalVirtualPoints <= 100000000 &&
+             data.totalGames is int && data.totalGames >= 0 && data.totalGames <= 10000000 &&
+             data.totalWins is int && data.totalWins >= 0 && data.totalWins <= data.totalGames &&
+             data.bestStreak is int && data.bestStreak >= 0 && data.bestStreak <= 100000 &&
+             data.badgeTitle is string && data.badgeTitle.size() >= 1 && data.badgeTitle.size() <= 40 &&
+             data.visibility == 'PUBLIC' &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    // --- Collection: Private User Profile & Wallet ---
+    match /users/{userId} {
+      allow get: if isOwner(userId) && isValidId(userId);
+      allow list: if false;
+
+      allow create: if isOwner(userId) &&
+                       isValidId(userId) &&
+                       incoming().keys().hasAll([
+                         'userId', 'displayName', 'email', 'publicUserId',
+                         'virtualCoins', 'totalGames', 'totalWins', 'totalVirtualPoints',
+                         'currentStreak', 'bestStreak', 'notifyResults',
+                         'notifyRoundClosing', 'notifyBonuses', 'accountStatus',
+                         'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'userId', 'displayName', 'email', 'publicUserId', 'photoUrl',
+                         'virtualCoins', 'totalGames', 'totalWins', 'totalVirtualPoints',
+                         'currentStreak', 'bestStreak', 'lastDailyBonusDate', 'notifyResults',
+                         'notifyRoundClosing', 'notifyBonuses', 'accountStatus',
+                         'createdAt', 'updatedAt'
+                       ]) &&
+                       isValidUserProfile(incoming(), userId);
+
+      allow update: if isOwner(userId) &&
+                       isValidId(userId) &&
+                       isValidUserProfile(incoming(), userId) &&
+                       incoming().userId == existing().userId &&
+                       incoming().publicUserId == existing().publicUserId &&
+                       incoming().accountStatus == existing().accountStatus &&
+                       incoming().createdAt == existing().createdAt &&
+                       (
+                         // Action 1: Profile & notification settings update
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'displayName', 'photoUrl', 'notifyResults',
+                           'notifyRoundClosing', 'notifyBonuses', 'updatedAt'
+                         ]) ||
+                         // Action 2: Wallet & gameplay stats update (prediction entry, settlement, or daily bonus)
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'virtualCoins', 'totalGames', 'totalWins', 'totalVirtualPoints',
+                           'currentStreak', 'bestStreak', 'lastDailyBonusDate', 'updatedAt'
+                         ])
+                       );
+
+      allow delete: if false;
+
+      // --- Subcollection: User Predictions ---
+      match /predictions/{predictionId} {
+        allow get: if isOwner(userId) && isValidId(predictionId);
+        allow list: if isOwner(userId);
+
+        allow create: if isOwner(userId) &&
+                         isValidId(predictionId) &&
+                         incoming().keys().hasAll([
+                           'userId', 'modeId', 'periodId', 'selectedColor',
+                           'stakeCoins', 'status', 'rewardCoins', 'createdAt', 'updatedAt'
+                         ]) &&
+                         incoming().keys().hasOnly([
+                           'userId', 'modeId', 'periodId', 'selectedColor',
+                           'stakeCoins', 'status', 'rewardCoins', 'createdAt', 'updatedAt'
+                         ]) &&
+                         incoming().status == 'PENDING' &&
+                         incoming().rewardCoins == 0 &&
+                         isValidPrediction(incoming(), userId);
+
+        // Terminal State Locking: only PENDING predictions can settle to WON or LOST
+        allow update: if isOwner(userId) &&
+                         isValidId(predictionId) &&
+                         isValidPrediction(incoming(), userId) &&
+                         existing().status == 'PENDING' &&
+                         incoming().status in ['WON', 'LOST'] &&
+                         incoming().userId == existing().userId &&
+                         incoming().modeId == existing().modeId &&
+                         incoming().periodId == existing().periodId &&
+                         incoming().selectedColor == existing().selectedColor &&
+                         incoming().stakeCoins == existing().stakeCoins &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'status', 'winningColor', 'rewardCoins', 'resultHash', 'updatedAt'
+                         ]);
+
+        allow delete: if false;
+      }
+
+      // --- Subcollection: Immutable Virtual Wallet Ledger ---
+      match /wallet_transactions/{txId} {
+        allow get: if isOwner(userId) && isValidId(txId);
+        allow list: if isOwner(userId);
+
+        allow create: if isOwner(userId) &&
+                         isValidId(txId) &&
+                         incoming().keys().hasAll([
+                           'userId', 'txType', 'amount', 'previousBalance',
+                           'newBalance', 'referenceId', 'description', 'createdAt'
+                         ]) &&
+                         incoming().keys().hasOnly([
+                           'userId', 'txType', 'amount', 'previousBalance',
+                           'newBalance', 'referenceId', 'description', 'createdAt'
+                         ]) &&
+                         isValidWalletTransaction(incoming(), userId);
+
+        allow update, delete: if false;
+      }
+
+      // --- Subcollection: User Notifications ---
+      match /notifications/{notificationId} {
+        allow get: if isOwner(userId) && isValidId(notificationId);
+        allow list: if isOwner(userId);
+
+        allow create: if isOwner(userId) &&
+                         isValidId(notificationId) &&
+                         incoming().keys().hasAll([
+                           'userId', 'category', 'title', 'message', 'read', 'createdAt', 'updatedAt'
+                         ]) &&
+                         incoming().keys().hasOnly([
+                           'userId', 'category', 'title', 'message', 'referenceId',
+                           'read', 'createdAt', 'updatedAt'
+                         ]) &&
+                         isValidNotification(incoming(), userId);
+
+        allow update: if isOwner(userId) &&
+                         isValidId(notificationId) &&
+                         isValidNotification(incoming(), userId) &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['read', 'updatedAt']);
+
+        allow delete: if isOwner(userId) && isValidId(notificationId);
+      }
+    }
+
+    // --- Collection: Shared Verifiable Completed Game Rounds (Create-Once Immutable) ---
+    match /game_rounds/{roundId} {
+      allow get: if isSignedIn() && isValidId(roundId) && existing().visibility == 'PUBLIC';
+      allow list: if isSignedIn() && resource.data.visibility == 'PUBLIC';
+
+      allow create: if isSignedIn() &&
+                       isValidId(roundId) &&
+                       incoming().keys().hasAll([
+                         'modeId', 'periodId', 'startTimeMs', 'endTimeMs',
+                         'winningColor', 'resultDigit', 'resultHash',
+                         'status', 'visibility', 'createdAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'modeId', 'periodId', 'startTimeMs', 'endTimeMs',
+                         'winningColor', 'resultDigit', 'resultHash',
+                         'status', 'visibility', 'createdAt'
+                       ]) &&
+                       isValidGameRound(incoming());
+
+      allow update, delete: if false;
+    }
+
+    // --- Collection: Public Non-PII Leaderboard (Split Collection Strategy) ---
+    match /leaderboard/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && existing().visibility == 'PUBLIC';
+      allow list: if isSignedIn() && resource.data.visibility == 'PUBLIC';
+
+      allow create: if isOwner(userId) &&
+                       isValidId(userId) &&
+                       incoming().keys().hasAll([
+                         'userId', 'displayName', 'publicUserId', 'totalVirtualPoints',
+                         'totalGames', 'totalWins', 'bestStreak', 'badgeTitle',
+                         'visibility', 'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'userId', 'displayName', 'publicUserId', 'photoUrl', 'totalVirtualPoints',
+                         'totalGames', 'totalWins', 'bestStreak', 'badgeTitle',
+                         'visibility', 'createdAt', 'updatedAt'
+                       ]) &&
+                       isValidLeaderboardEntry(incoming(), userId);
+
+      allow update: if isOwner(userId) &&
+                       isValidId(userId) &&
+                       isValidLeaderboardEntry(incoming(), userId) &&
+                       incoming().userId == existing().userId &&
+                       incoming().publicUserId == existing().publicUserId &&
+                       incoming().visibility == existing().visibility &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'displayName', 'photoUrl', 'totalVirtualPoints',
+                         'totalGames', 'totalWins', 'bestStreak', 'badgeTitle', 'updatedAt'
+                       ]);
+
+      allow delete: if false;
+    }
+  }
+}

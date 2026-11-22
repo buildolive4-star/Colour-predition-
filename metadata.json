@@ -1,0 +1,6 @@
+{
+  "name": "ChromaPulse",
+  "description": "Real-time virtual-coin color prediction gaming platform with timed rounds, wallet ledger, history, leaderboard, and live notifications.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
