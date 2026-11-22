@@ -17,7 +17,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBalanceWallet
+import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.EmojiEvents
+import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -53,6 +56,8 @@ import com.example.ui.components.VirtualDisclaimerBanner
 import com.example.ui.components.brightColor
 import com.example.ui.components.formatCoins
 import com.example.ui.components.formatTimestamp
+import com.example.ui.theme.AmberGoldTop
+import com.example.ui.theme.AmberOrangeMid
 import com.example.ui.theme.CoinGold
 import com.example.ui.theme.CoinGoldSoft
 import com.example.ui.theme.CyanPulse
@@ -65,6 +70,7 @@ import com.example.ui.theme.ObsidianBorder
 import com.example.ui.theme.ObsidianCanvas
 import com.example.ui.theme.ObsidianCard
 import com.example.ui.theme.ObsidianCardElevated
+import com.example.ui.theme.RoyalIndigoPill
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 
@@ -73,6 +79,9 @@ fun ProfileScreen(
     profile: UserProfile?,
     predictions: List<PredictionRecord>,
     onOpenWallet: () -> Unit,
+    onOpenQrCenter: () -> Unit,
+    onOpenAdminPanel: () -> Unit,
+    onOpenLeaderboard: () -> Unit,
     onUpdateSettings: (String, Boolean, Boolean, Boolean) -> Unit
 ) {
     var showEditNameDialog by remember { mutableStateOf(false) }
@@ -317,28 +326,92 @@ fun ProfileScreen(
             }
         }
 
-        // Wallet Shortcut Button
+        // Wallet, QR Center, Leaderboard & Admin Panel Action Buttons
         item {
-            Button(
-                onClick = onOpenWallet,
-                shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = ObsidianCardElevated,
-                    contentColor = CoinGoldSoft
-                ),
-                border = BorderStroke(1.dp, CoinGold.copy(alpha = 0.5f)),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp)
-                    .testTag("profile_open_wallet_button")
-            ) {
-                Icon(Icons.Filled.AccountBalanceWallet, contentDescription = null, tint = CoinGold)
-                Spacer(modifier = Modifier.width(10.dp))
-                Text(
-                    text = "Open Virtual Coin Wallet & Ledger",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = CoinGoldSoft
-                )
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(
+                    onClick = onOpenWallet,
+                    shape = RoundedCornerShape(16.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = ObsidianCardElevated,
+                        contentColor = CoinGoldSoft
+                    ),
+                    border = BorderStroke(1.dp, CoinGold.copy(alpha = 0.5f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp)
+                        .testTag("profile_open_wallet_button")
+                ) {
+                    Icon(Icons.Filled.AccountBalanceWallet, contentDescription = null, tint = CoinGold)
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        text = "Virtual Coin Wallet & Ledger",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = CoinGoldSoft
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Button(
+                        onClick = onOpenQrCenter,
+                        shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = AmberOrangeMid,
+                            contentColor = Color.White
+                        ),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(48.dp)
+                            .testTag("profile_open_qr_button")
+                    ) {
+                        Icon(Icons.Filled.QrCode2, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("QR Vouchers", fontWeight = FontWeight.Bold)
+                    }
+
+                    Button(
+                        onClick = onOpenLeaderboard,
+                        shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = ObsidianCardElevated,
+                            contentColor = TextPrimary
+                        ),
+                        border = BorderStroke(1.dp, ObsidianBorder),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(48.dp)
+                            .testTag("profile_open_leaderboard_button")
+                    ) {
+                        Icon(Icons.Filled.EmojiEvents, contentDescription = null, tint = AmberGoldTop, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Rankings", fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                Button(
+                    onClick = onOpenAdminPanel,
+                    shape = RoundedCornerShape(16.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = RoyalIndigoPill,
+                        contentColor = Color.White
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp)
+                        .testTag("profile_open_admin_button")
+                ) {
+                    Icon(Icons.Filled.AdminPanelSettings, contentDescription = null, modifier = Modifier.size(20.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Open Admin Panel (PIN: 1234)",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                }
             }
         }
 

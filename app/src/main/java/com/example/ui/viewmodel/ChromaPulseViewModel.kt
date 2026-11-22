@@ -3,12 +3,15 @@ package com.example.ui.viewmodel
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.data.AdminAuditLogEntity
+import com.example.data.AppConfigEntity
 import com.example.data.ChromaPulseRepository
 import com.example.data.GameRoundRecord
 import com.example.data.LeaderboardEntry
 import com.example.data.PredictionRecord
 import com.example.data.UserNotification
 import com.example.data.UserProfile
+import com.example.data.VirtualVoucherEntity
 import com.example.data.WalletTransaction
 import com.example.domain.ActiveRoundSnapshot
 import com.example.domain.ColorPredictionEngine
@@ -90,6 +93,43 @@ class ChromaPulseViewModel(
     val leaderboardState: StateFlow<UiState<List<LeaderboardEntry>>> =
         repository.observeLeaderboard()
             .toUiStateFlow("Failed to load leaderboard")
+
+    val appConfigState: StateFlow<AppConfigEntity> =
+        repository.observeAppConfig()
+            .map { it ?: AppConfigEntity() }
+            .catch { error ->
+                if (error is CancellationException) throw error
+                emit(AppConfigEntity())
+            }
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+                initialValue = AppConfigEntity()
+            )
+
+    val vouchersState: StateFlow<List<VirtualVoucherEntity>> =
+        repository.observeVouchers()
+            .catch { error ->
+                if (error is CancellationException) throw error
+                emit(emptyList())
+            }
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+                initialValue = emptyList()
+            )
+
+    val adminLogsState: StateFlow<List<AdminAuditLogEntity>> =
+        repository.observeAdminLogs()
+            .catch { error ->
+                if (error is CancellationException) throw error
+                emit(emptyList())
+            }
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+                initialValue = emptyList()
+            )
 
     private val settlingIds = mutableSetOf<String>()
     private val publishedRoundIds = mutableSetOf<String>()
@@ -192,13 +232,13 @@ class ChromaPulseViewModel(
                         )
                         publishRoundIfNeeded(outcome)
                         repository.settlePrediction(currentUserId, pred, outcome)
-                            .onSuccess { reward ->
+                            .onSuccess { (reward, effectiveOutcome) ->
                                 _latestBanner.value = RoundSettlementBanner(
                                     mode = mode,
                                     periodId = pred.periodId,
-                                    winningColor = outcome.winningColor,
-                                    resultDigit = outcome.resultDigit,
-                                    resultHash = outcome.resultHash,
+                                    winningColor = effectiveOutcome.winningColor,
+                                    resultDigit = effectiveOutcome.resultDigit,
+                                    resultHash = effectiveOutcome.resultHash,
                                     userPredicted = true,
                                     didWin = reward > 0L,
                                     rewardCoins = reward
@@ -258,12 +298,87 @@ class ChromaPulseViewModel(
                 stakeCoins = stakeCoins
             ).onSuccess {
                 _snackbarMessages.tryEmit(
-                    "Locked $stakeCoins virtual coins on ${color.displayName} (${active.periodId})"
+                    "Locked $stakeCoins VC on ${color.displayName} (${active.periodId})"
                 )
             }.onFailure { err ->
                 _snackbarMessages.tryEmit(err.localizedMessage ?: "Unable to lock prediction.")
             }
             _isSubmittingPrediction.value = false
+        }
+    }
+
+    fun playMiniGameRound(
+        gameTitle: String,
+        stakeCoins: Long,
+        rewardCoins: Long,
+        summary: String,
+        onCompleted: ((Boolean) -> Unit)? = null
+    ) {
+        viewModelScope.launch {
+            repository.playMiniGameRound(
+                userId = currentUserId,
+                gameTitle = gameTitle,
+                stakeCoins = stakeCoins,
+                rewardCoins = rewardCoins,
+                summary = summary
+            ).onSuccess {
+                val msg = if (rewardCoins > 0L) {
+                    "$gameTitle: Won +$rewardCoins VC!"
+                } else {
+                    "$gameTitle: $summary"
+                }
+                _snackbarMessages.tryEmit(msg)
+                onCompleted?.invoke(true)
+            }.onFailure { err ->
+                _snackbarMessages.tryEmit(err.localizedMessage ?: "Unable to play $gameTitle.")
+                onCompleted?.invoke(false)
+            }
+        }
+    }
+
+    fun redeemVoucherCode(code: String) {
+        viewModelScope.launch {
+            repository.redeemVoucherCode(currentUserId, code)
+                .onSuccess { credited ->
+                    _snackbarMessages.tryEmit("QR Voucher redeemed! +$credited VC added.")
+                }
+                .onFailure { err ->
+                    _snackbarMessages.tryEmit(err.localizedMessage ?: "Invalid voucher code.")
+                }
+        }
+    }
+
+    // ---- Admin Panel Actions ----
+
+    fun adminSaveConfig(config: AppConfigEntity, auditSummary: String) {
+        viewModelScope.launch {
+            repository.adminUpdateConfig(config, auditSummary)
+                .onSuccess { _snackbarMessages.tryEmit("Admin settings saved: $auditSummary") }
+                .onFailure { err -> _snackbarMessages.tryEmit(err.localizedMessage ?: "Failed to save config.") }
+        }
+    }
+
+    fun adminAdjustCoins(deltaCoins: Long, reason: String) {
+        viewModelScope.launch {
+            repository.adminAdjustUserCoins(currentUserId, deltaCoins, reason)
+                .onSuccess { nextBalance ->
+                    _snackbarMessages.tryEmit("Wallet updated to $nextBalance VC.")
+                }
+                .onFailure { err ->
+                    _snackbarMessages.tryEmit(err.localizedMessage ?: "Coin adjustment failed.")
+                }
+        }
+    }
+
+    fun adminCreateVoucher(coinsAmount: Long, label: String) {
+        viewModelScope.launch {
+            repository.adminCreateVoucher(coinsAmount, label)
+                .onSuccess { voucher ->
+                    _snackbarMessages.tryEmit("Created QR Voucher ${voucher.code} (+${voucher.coinsAmount} VC)")
+                }
+                .onFailure { err ->
+                    _snackbarMessages.tryEmit(err.localizedMessage ?: "Failed to create QR voucher.")
+                }
         }
     }
 

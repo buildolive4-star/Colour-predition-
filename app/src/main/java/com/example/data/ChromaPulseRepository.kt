@@ -8,6 +8,9 @@ import com.example.domain.PredictionColor
 import com.example.domain.VerifiableRoundOutcome
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
+import java.util.Locale
+import kotlin.math.roundToLong
+import kotlin.random.Random
 
 class ChromaPulseRepository(
     private val db: ChromaPulseDatabase
@@ -33,6 +36,15 @@ class ChromaPulseRepository(
 
     fun observeLeaderboard(): Flow<List<LeaderboardEntry>> =
         dao.observeLeaderboard()
+
+    fun observeAppConfig(): Flow<AppConfigEntity?> =
+        dao.observeAppConfig()
+
+    fun observeVouchers(): Flow<List<VirtualVoucherEntity>> =
+        dao.observeVouchers()
+
+    fun observeAdminLogs(): Flow<List<AdminAuditLogEntity>> =
+        dao.observeAdminLogs()
 
     suspend fun ensureLocalPlayerInitialized(userId: String = DEFAULT_USER_ID): Result<Unit> =
         try {
@@ -73,7 +85,7 @@ class ChromaPulseRepository(
                             userId = userId,
                             category = "ANNOUNCEMENT",
                             title = "Welcome to ChromaPulse!",
-                            message = "2,500 virtual coins credited to your demo wallet. Pick Red, Green, or Violet in live timed rounds.",
+                            message = "2,500 virtual coins credited. Explore WinGo Color Arena, Mini-Games, QR Vouchers & Admin Panel.",
                             referenceId = "welcome_bonus",
                             read = false,
                             createdAtMs = now,
@@ -100,6 +112,28 @@ class ChromaPulseRepository(
                         )
                     )
                 }
+
+                if (dao.getAppConfig() == null) {
+                    dao.upsertAppConfig(AppConfigEntity(updatedAtMs = now))
+                }
+
+                // Pre-seed 2 demo virtual gift vouchers for QR Center testing
+                dao.insertVoucher(
+                    VirtualVoucherEntity(
+                        code = "CP-WELCOME-500",
+                        coinsAmount = 500L,
+                        label = "Starter Gift QR Voucher",
+                        createdAtMs = now - 60_000L
+                    )
+                )
+                dao.insertVoucher(
+                    VirtualVoucherEntity(
+                        code = "CP-MEGA-1000",
+                        coinsAmount = 1000L,
+                        label = "Mega Demo QR Voucher",
+                        createdAtMs = now
+                    )
+                )
             }
             Result.success(Unit)
         } catch (e: CancellationException) {
@@ -123,12 +157,23 @@ class ChromaPulseRepository(
             val now = System.currentTimeMillis()
 
             db.withTransaction {
+                val config = dao.getAppConfig() ?: AppConfigEntity()
+                val modeEnabled = when (mode) {
+                    GameMode.MODE_30S -> config.mode30sEnabled
+                    GameMode.MODE_60S -> config.mode60sEnabled
+                    GameMode.MODE_3M -> config.mode3mEnabled
+                    GameMode.MODE_5M -> config.mode5mEnabled
+                }
+                if (!modeEnabled) {
+                    throw IllegalStateException("${mode.title} is currently paused by Admin.")
+                }
+
                 val user = dao.getUserProfile(userId) ?: error("Player wallet not initialized yet.")
                 if (dao.getPredictionById(predId) != null) {
                     throw IllegalStateException("Prediction already locked for period $periodId.")
                 }
                 if (user.virtualCoins < stakeCoins) {
-                    throw IllegalStateException("Insufficient virtual coins. Claim daily bonus or choose a smaller stake.")
+                    throw IllegalStateException("Insufficient virtual coins. Claim daily bonus or refill.")
                 }
 
                 val newBalance = user.virtualCoins - stakeCoins
@@ -214,24 +259,47 @@ class ChromaPulseRepository(
         userId: String = DEFAULT_USER_ID,
         prediction: PredictionRecord,
         outcome: VerifiableRoundOutcome
-    ): Result<Long> =
+    ): Result<Pair<Long, VerifiableRoundOutcome>> =
         try {
             val predId = prediction.id.ifBlank {
                 ColorPredictionEngine.buildRoundDocId(outcome.mode, prediction.periodId)
             }
             val now = System.currentTimeMillis()
 
-            val awarded = db.withTransaction {
-                val currentPred = dao.getPredictionById(predId) ?: return@withTransaction 0L
-                if (currentPred.status != "PENDING") return@withTransaction 0L
+            val result = db.withTransaction {
+                val currentPred = dao.getPredictionById(predId) ?: return@withTransaction (0L to outcome)
+                if (currentPred.status != "PENDING") return@withTransaction (0L to outcome)
 
-                val user = dao.getUserProfile(userId) ?: return@withTransaction 0L
+                val user = dao.getUserProfile(userId) ?: return@withTransaction (0L to outcome)
+                val config = dao.getAppConfig() ?: AppConfigEntity()
+
+                // Honor one-shot Admin demo color override if configured
+                val effectiveOutcome = if (!config.forcedNextColor.isNullOrBlank()) {
+                    val forcedColor = PredictionColor.fromRaw(config.forcedNextColor)
+                    val forcedDigit = when (forcedColor) {
+                        PredictionColor.VIOLET -> 5
+                        PredictionColor.GREEN -> 7
+                        PredictionColor.RED -> 4
+                    }
+                    dao.upsertAppConfig(config.copy(forcedNextColor = null, updatedAtMs = now))
+                    outcome.copy(
+                        winningColor = forcedColor,
+                        resultDigit = forcedDigit
+                    )
+                } else {
+                    outcome
+                }
+
                 val selectedColor = PredictionColor.fromRaw(currentPred.selectedColor)
-                val reward = ColorPredictionEngine.calculateRewardCoins(
-                    selectedColor = selectedColor,
-                    winningColor = outcome.winningColor,
-                    stakeCoins = currentPred.stakeCoins
-                )
+                val multiplier = when (selectedColor) {
+                    PredictionColor.VIOLET -> config.violetMultiplier
+                    PredictionColor.RED, PredictionColor.GREEN -> config.redGreenMultiplier
+                }
+                val reward = if (selectedColor == effectiveOutcome.winningColor) {
+                    (currentPred.stakeCoins.toDouble() * multiplier).roundToLong()
+                } else {
+                    0L
+                }
                 val didWin = reward > 0L
 
                 val nextCoins = user.virtualCoins + reward
@@ -244,9 +312,9 @@ class ChromaPulseRepository(
                 dao.updatePrediction(
                     currentPred.copy(
                         status = if (didWin) "WON" else "LOST",
-                        winningColor = outcome.winningColor.name,
+                        winningColor = effectiveOutcome.winningColor.name,
                         rewardCoins = reward,
-                        resultHash = outcome.resultHash,
+                        resultHash = effectiveOutcome.resultHash,
                         updatedAtMs = now
                     )
                 )
@@ -288,8 +356,8 @@ class ChromaPulseRepository(
                             amount = reward,
                             previousBalance = user.virtualCoins,
                             newBalance = nextCoins,
-                            referenceId = outcome.periodId,
-                            description = "Won ${outcome.mode.shortLabel} (${outcome.winningColor.displayName} ${selectedColor.multiplierLabel})",
+                            referenceId = effectiveOutcome.periodId,
+                            description = "Won ${effectiveOutcome.mode.shortLabel} (${effectiveOutcome.winningColor.displayName})",
                             createdAtMs = now
                         )
                     )
@@ -301,13 +369,13 @@ class ChromaPulseRepository(
                             id = "res_$predId",
                             userId = userId,
                             category = if (didWin) "REWARD" else "ROUND_RESULT",
-                            title = if (didWin) "+$reward Virtual Coins Won!" else "Round ${outcome.periodId} Completed",
+                            title = if (didWin) "+$reward Virtual Coins Won!" else "Round ${effectiveOutcome.periodId} Completed",
                             message = if (didWin) {
-                                "Your ${selectedColor.displayName} pick matched ${outcome.winningColor.displayName} (#${outcome.resultDigit}) in ${outcome.mode.title}."
+                                "Your ${selectedColor.displayName} pick matched ${effectiveOutcome.winningColor.displayName} (#${effectiveOutcome.resultDigit})."
                             } else {
-                                "${outcome.mode.title} landed on ${outcome.winningColor.displayName} (#${outcome.resultDigit}). Your pick was ${selectedColor.displayName}."
+                                "${effectiveOutcome.mode.title} landed on ${effectiveOutcome.winningColor.displayName} (#${effectiveOutcome.resultDigit})."
                             },
-                            referenceId = outcome.periodId,
+                            referenceId = effectiveOutcome.periodId,
                             read = false,
                             createdAtMs = now,
                             updatedAtMs = now
@@ -315,9 +383,286 @@ class ChromaPulseRepository(
                     )
                 }
 
-                reward
+                reward to effectiveOutcome
             }
-            Result.success(awarded)
+            Result.success(result)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+
+    /**
+     * Atomic virtual-coin settlement for Mini-Games (Lucky Spin Wheel, Color Mines, Cyber Dice).
+     */
+    suspend fun playMiniGameRound(
+        userId: String = DEFAULT_USER_ID,
+        gameTitle: String,
+        stakeCoins: Long,
+        rewardCoins: Long,
+        summary: String
+    ): Result<Long> =
+        try {
+            require(stakeCoins >= 0L && rewardCoins >= 0L) { "Invalid virtual coin values." }
+            val now = System.currentTimeMillis()
+            val txBase = "mini_${now}_${Random.nextInt(100, 999)}"
+
+            val netDelta = db.withTransaction {
+                val user = dao.getUserProfile(userId) ?: error("Player wallet not ready.")
+                if (user.virtualCoins < stakeCoins) {
+                    throw IllegalStateException("Not enough virtual coins. Claim Daily Bonus or Demo Refill.")
+                }
+
+                val afterStake = user.virtualCoins - stakeCoins
+                val finalBalance = afterStake + rewardCoins
+                val didWin = rewardCoins > stakeCoins
+                val nextGames = user.totalGames + 1L
+                val nextWins = if (didWin) user.totalWins + 1L else user.totalWins
+                val nextPoints = user.totalVirtualPoints + rewardCoins
+                val nextStreak = if (didWin) user.currentStreak + 1L else 0L
+                val nextBestStreak = maxOf(user.bestStreak, nextStreak)
+                val nextBadge = ColorPredictionEngine.resolveBadgeTitle(nextPoints, nextWins, nextBestStreak)
+
+                dao.updateUserProfile(
+                    user.copy(
+                        virtualCoins = finalBalance,
+                        totalGames = nextGames,
+                        totalWins = nextWins,
+                        totalVirtualPoints = nextPoints,
+                        currentStreak = nextStreak,
+                        bestStreak = nextBestStreak,
+                        updatedAtMs = now
+                    )
+                )
+
+                if (stakeCoins > 0L) {
+                    dao.insertWalletTransaction(
+                        WalletTransaction(
+                            id = "${txBase}_in",
+                            userId = userId,
+                            txType = "MINI_GAME_ENTRY",
+                            amount = -stakeCoins,
+                            previousBalance = user.virtualCoins,
+                            newBalance = afterStake,
+                            referenceId = gameTitle,
+                            description = "$gameTitle entry ($summary)",
+                            createdAtMs = now
+                        )
+                    )
+                }
+
+                if (rewardCoins > 0L) {
+                    dao.insertWalletTransaction(
+                        WalletTransaction(
+                            id = "${txBase}_out",
+                            userId = userId,
+                            txType = "MINI_GAME_REWARD",
+                            amount = rewardCoins,
+                            previousBalance = afterStake,
+                            newBalance = finalBalance,
+                            referenceId = gameTitle,
+                            description = "$gameTitle win: $summary",
+                            createdAtMs = now + 1L
+                        )
+                    )
+                }
+
+                dao.upsertLeaderboardEntry(
+                    LeaderboardEntry(
+                        id = userId,
+                        userId = userId,
+                        displayName = user.displayName,
+                        publicUserId = user.publicUserId,
+                        photoUrl = user.photoUrl,
+                        totalVirtualPoints = nextPoints,
+                        totalGames = nextGames,
+                        totalWins = nextWins,
+                        bestStreak = nextBestStreak,
+                        badgeTitle = nextBadge,
+                        createdAtMs = user.createdAtMs,
+                        updatedAtMs = now
+                    )
+                )
+
+                rewardCoins - stakeCoins
+            }
+            Result.success(netDelta)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+
+    suspend fun redeemVoucherCode(
+        userId: String = DEFAULT_USER_ID,
+        rawCode: String
+    ): Result<Long> =
+        try {
+            val cleanCode = rawCode.trim().uppercase(Locale.US)
+            require(cleanCode.isNotBlank()) { "Please enter a Virtual Voucher code." }
+            val now = System.currentTimeMillis()
+
+            val credited = db.withTransaction {
+                val voucher = dao.getVoucherByCode(cleanCode)
+                    ?: throw IllegalStateException("Voucher '$cleanCode' not found. Create one in Admin Panel or try CP-WELCOME-500.")
+                if (voucher.redeemed) {
+                    throw IllegalStateException("Voucher '$cleanCode' has already been redeemed.")
+                }
+                val user = dao.getUserProfile(userId) ?: error("Player wallet not ready.")
+                val newBalance = user.virtualCoins + voucher.coinsAmount
+
+                dao.updateVoucher(voucher.copy(redeemed = true, redeemedAtMs = now))
+                dao.updateUserProfile(user.copy(virtualCoins = newBalance, updatedAtMs = now))
+                dao.insertWalletTransaction(
+                    WalletTransaction(
+                        id = "voucher_$cleanCode",
+                        userId = userId,
+                        txType = "QR_VOUCHER_REDEEM",
+                        amount = voucher.coinsAmount,
+                        previousBalance = user.virtualCoins,
+                        newBalance = newBalance,
+                        referenceId = cleanCode,
+                        description = "Redeemed QR Voucher: ${voucher.label}",
+                        createdAtMs = now
+                    )
+                )
+                dao.insertNotification(
+                    UserNotification(
+                        id = "notif_voucher_$cleanCode",
+                        userId = userId,
+                        category = "DAILY_BONUS",
+                        title = "QR Voucher Redeemed!",
+                        message = "+${voucher.coinsAmount} virtual coins added via code $cleanCode.",
+                        referenceId = cleanCode,
+                        read = false,
+                        createdAtMs = now,
+                        updatedAtMs = now
+                    )
+                )
+                voucher.coinsAmount
+            }
+            Result.success(credited)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+
+    // ---- ADMIN PANEL ACTIONS ----
+
+    suspend fun adminUpdateConfig(
+        config: AppConfigEntity,
+        auditSummary: String
+    ): Result<Unit> =
+        try {
+            val now = System.currentTimeMillis()
+            db.withTransaction {
+                dao.upsertAppConfig(config.copy(updatedAtMs = now))
+                dao.insertAdminLog(
+                    AdminAuditLogEntity(
+                        id = "adm_$now",
+                        action = "CONFIG_UPDATE",
+                        details = auditSummary,
+                        createdAtMs = now
+                    )
+                )
+            }
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+
+    suspend fun adminAdjustUserCoins(
+        userId: String = DEFAULT_USER_ID,
+        deltaCoins: Long,
+        reason: String
+    ): Result<Long> =
+        try {
+            require(deltaCoins != 0L) { "Adjustment amount cannot be zero." }
+            val now = System.currentTimeMillis()
+            val cleanReason = reason.trim().ifBlank {
+                if (deltaCoins > 0) "Admin virtual demo credit" else "Admin virtual demo debit"
+            }
+
+            val updatedBalance = db.withTransaction {
+                val user = dao.getUserProfile(userId) ?: error("Player profile not found.")
+                val nextBalance = (user.virtualCoins + deltaCoins).coerceAtLeast(0L)
+                val appliedDelta = nextBalance - user.virtualCoins
+
+                dao.updateUserProfile(user.copy(virtualCoins = nextBalance, updatedAtMs = now))
+                dao.insertWalletTransaction(
+                    WalletTransaction(
+                        id = "admin_adj_$now",
+                        userId = userId,
+                        txType = if (appliedDelta >= 0L) "ADMIN_CREDIT" else "ADMIN_DEBIT",
+                        amount = appliedDelta,
+                        previousBalance = user.virtualCoins,
+                        newBalance = nextBalance,
+                        referenceId = "ADMIN",
+                        description = cleanReason,
+                        createdAtMs = now
+                    )
+                )
+                dao.insertNotification(
+                    UserNotification(
+                        id = "notif_admin_$now",
+                        userId = userId,
+                        category = "ANNOUNCEMENT",
+                        title = if (appliedDelta >= 0L) "Admin Credited +$appliedDelta VC" else "Admin Adjusted $appliedDelta VC",
+                        message = cleanReason,
+                        referenceId = "ADMIN",
+                        read = false,
+                        createdAtMs = now,
+                        updatedAtMs = now
+                    )
+                )
+                dao.insertAdminLog(
+                    AdminAuditLogEntity(
+                        id = "adm_coin_$now",
+                        action = if (appliedDelta >= 0L) "CREDIT_COINS" else "DEBIT_COINS",
+                        details = "${if (appliedDelta >= 0L) "+" else ""}$appliedDelta VC to ${user.publicUserId}: $cleanReason",
+                        createdAtMs = now
+                    )
+                )
+                nextBalance
+            }
+            Result.success(updatedBalance)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+
+    suspend fun adminCreateVoucher(
+        coinsAmount: Long,
+        label: String
+    ): Result<VirtualVoucherEntity> =
+        try {
+            require(coinsAmount in 50L..50_000L) { "Voucher amount must be 50–50,000 VC." }
+            val now = System.currentTimeMillis()
+            val randomSuffix = Random.nextInt(1000, 9999)
+            val code = "CP-${coinsAmount}VC-$randomSuffix"
+            val voucher = VirtualVoucherEntity(
+                code = code,
+                coinsAmount = coinsAmount,
+                label = label.trim().ifBlank { "Admin QR Gift Voucher" },
+                redeemed = false,
+                createdAtMs = now
+            )
+            db.withTransaction {
+                dao.insertVoucher(voucher)
+                dao.insertAdminLog(
+                    AdminAuditLogEntity(
+                        id = "adm_vch_$now",
+                        action = "CREATE_QR_VOUCHER",
+                        details = "Generated $code (+$coinsAmount VC)",
+                        createdAtMs = now
+                    )
+                )
+            }
+            Result.success(voucher)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {

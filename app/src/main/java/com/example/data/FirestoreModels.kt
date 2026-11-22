@@ -97,3 +97,37 @@ data class LeaderboardEntry(
     val createdAtMs: Long = System.currentTimeMillis(),
     val updatedAtMs: Long = System.currentTimeMillis()
 )
+
+@Entity(tableName = "app_config")
+data class AppConfigEntity(
+    @PrimaryKey val id: String = "global",
+    val announcementText: String = "Virtual Coins Entertainment Arena — Pick Green, Violet, or Red with SHA-256 verifiable results.",
+    val redGreenMultiplier: Double = 2.0,
+    val violetMultiplier: Double = 4.5,
+    val mode30sEnabled: Boolean = true,
+    val mode60sEnabled: Boolean = true,
+    val mode3mEnabled: Boolean = true,
+    val mode5mEnabled: Boolean = true,
+    val forcedNextColor: String? = null,
+    val adminQrLabel: String = "ChromaPulse Virtual Counter",
+    val adminQrPayload: String = "CHROMAPULSE:VIRTUAL-DEMO:COUNTER-01",
+    val updatedAtMs: Long = System.currentTimeMillis()
+)
+
+@Entity(tableName = "virtual_vouchers")
+data class VirtualVoucherEntity(
+    @PrimaryKey val code: String,
+    val coinsAmount: Long,
+    val label: String,
+    val redeemed: Boolean = false,
+    val redeemedAtMs: Long? = null,
+    val createdAtMs: Long = System.currentTimeMillis()
+)
+
+@Entity(tableName = "admin_audit_logs")
+data class AdminAuditLogEntity(
+    @PrimaryKey val id: String,
+    val action: String,
+    val details: String,
+    val createdAtMs: Long = System.currentTimeMillis()
+)

@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -24,14 +23,17 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CardGiftcard
+import androidx.compose.material.icons.filled.Casino
+import androidx.compose.material.icons.filled.Diamond
 import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.SportsEsports
+import androidx.compose.material.icons.filled.QrCode2
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
@@ -77,7 +79,6 @@ import com.example.ui.components.formatEpochMs
 import com.example.ui.theme.AmberGoldTop
 import com.example.ui.theme.AmberOrangeDeep
 import com.example.ui.theme.AmberOrangeMid
-import com.example.ui.theme.CoinGold
 import com.example.ui.theme.CoinGoldSoft
 import com.example.ui.theme.CyanPulse
 import com.example.ui.theme.ElectricViolet
@@ -99,12 +100,16 @@ import java.util.Locale
 @Composable
 fun HomeScreen(
     profile: UserProfile?,
+    announcementText: String,
     activeRounds: Map<GameMode, ActiveRoundSnapshot>,
     recentOutcomesByMode: Map<GameMode, List<VerifiableRoundOutcome>>,
     predictions: List<PredictionRecord>,
     unreadNotificationsCount: Int,
     isClaimingBonus: Boolean,
     onOpenGameMode: (GameMode) -> Unit,
+    onOpenMiniGame: (Int) -> Unit,
+    onOpenQrCenter: () -> Unit,
+    onOpenAdminPanel: () -> Unit,
     onOpenWallet: () -> Unit,
     onOpenNotifications: () -> Unit,
     onOpenProfile: () -> Unit,
@@ -133,7 +138,7 @@ fun HomeScreen(
         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        // ShreeWin Style Brand Header
+        // ShreeWin Style Brand Header with Wallet, QR & Notification Icons
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -154,7 +159,7 @@ fun HomeScreen(
                         contentDescription = stringResource(R.string.cd_app_logo),
                         contentScale = ContentScale.Crop,
                         modifier = Modifier
-                            .size(42.dp)
+                            .size(40.dp)
                             .clip(RoundedCornerShape(12.dp))
                     )
                     Column {
@@ -176,16 +181,28 @@ fun HomeScreen(
 
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    horizontalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
                     VirtualCoinBalancePill(
                         coins = profile?.virtualCoins ?: ColorPredictionEngine.INITIAL_DEMO_COINS,
                         onClick = onOpenWallet
                     )
                     IconButton(
+                        onClick = onOpenQrCenter,
+                        modifier = Modifier
+                            .size(40.dp)
+                            .testTag("home_qr_icon_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.QrCode2,
+                            contentDescription = "Open QR Center",
+                            tint = AmberGoldTop
+                        )
+                    }
+                    IconButton(
                         onClick = onOpenNotifications,
                         modifier = Modifier
-                            .size(44.dp)
+                            .size(40.dp)
                             .testTag("home_notifications_button")
                     ) {
                         BadgedBox(
@@ -211,7 +228,7 @@ fun HomeScreen(
             }
         }
 
-        // Signature ShreeWin Dual Top Action Pills (Warm Amber-Gold + Royal Violet-Indigo)
+        // Signature ShreeWin Dual Top Action Pills (QR & Bonus + Admin Panel)
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -221,27 +238,29 @@ fun HomeScreen(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier
                         .weight(1f)
-                        .height(48.dp)
+                        .height(46.dp)
                         .clip(RoundedCornerShape(14.dp))
                         .background(
                             Brush.horizontalGradient(listOf(AmberGoldTop, AmberOrangeMid))
                         )
-                        .clickable { onOpenGameMode(GameMode.MODE_30S) }
-                        .testTag("home_quick_play_pill")
+                        .clickable(enabled = !isClaimingBonus) {
+                            if (bonusClaimedToday) onOpenQrCenter() else onClaimDailyBonus()
+                        }
+                        .testTag("home_claim_daily_bonus_button")
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Icon(
-                            imageVector = Icons.Filled.PlayArrow,
+                            imageVector = if (bonusClaimedToday) Icons.Filled.QrCode2 else Icons.Filled.CardGiftcard,
                             contentDescription = null,
                             tint = ObsidianCanvas,
-                            modifier = Modifier.size(20.dp)
+                            modifier = Modifier.size(18.dp)
                         )
                         Text(
-                            text = "Play WinGo",
-                            style = MaterialTheme.typography.titleMedium,
+                            text = if (bonusClaimedToday) "QR Vouchers" else "Get +500 VC",
+                            style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.ExtraBold,
                             color = ObsidianCanvas
                         )
@@ -252,29 +271,27 @@ fun HomeScreen(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier
                         .weight(1f)
-                        .height(48.dp)
+                        .height(46.dp)
                         .clip(RoundedCornerShape(14.dp))
                         .background(
                             Brush.horizontalGradient(listOf(RoyalIndigoPill, RoyalIndigoPillBright))
                         )
-                        .clickable(enabled = !isClaimingBonus) {
-                            if (bonusClaimedToday) onOpenWallet() else onClaimDailyBonus()
-                        }
-                        .testTag("home_claim_daily_bonus_button")
+                        .clickable(onClick = onOpenAdminPanel)
+                        .testTag("home_admin_panel_button")
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Icon(
-                            imageVector = Icons.Filled.CardGiftcard,
+                            imageVector = Icons.Filled.AdminPanelSettings,
                             contentDescription = null,
                             tint = Color.White,
                             modifier = Modifier.size(18.dp)
                         )
                         Text(
-                            text = if (bonusClaimedToday) "Virtual Wallet" else "Get +500 VC",
-                            style = MaterialTheme.typography.titleMedium,
+                            text = "Admin Panel",
+                            style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.ExtraBold,
                             color = Color.White
                         )
@@ -283,7 +300,7 @@ fun HomeScreen(
             }
         }
 
-        // ShreeWin Style Announcement Bar with Amber Megaphone & Detail Pill
+        // ShreeWin Announcement Bar (Synced live with Admin Panel Broadcast!)
         item {
             Surface(
                 shape = RoundedCornerShape(14.dp),
@@ -305,7 +322,7 @@ fun HomeScreen(
                         modifier = Modifier.size(20.dp)
                     )
                     Text(
-                        text = "Virtual Coins Entertainment Arena — Pick Green, Violet, or Red with SHA-256 verifiable results.",
+                        text = announcementText,
                         style = MaterialTheme.typography.bodySmall,
                         color = TextPrimary,
                         maxLines = 2,
@@ -330,7 +347,7 @@ fun HomeScreen(
             }
         }
 
-        // Featured Live Hero Banner (ShreeWin Gold-Framed Banner)
+        // Featured Live Hero Banner
         item {
             FeaturedArenaHeroCard(
                 round = featuredRound,
@@ -338,41 +355,41 @@ fun HomeScreen(
             )
         }
 
-        // 5 Circular Category Badges Strip (Matching Screenshot #3)
+        // 5 Circular Category Badges Strip (Matching Screenshot #3: WinGo, Spin, Mines, Dice, QR)
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 CategoryBadgeItem(
-                    label = "30s WinGo",
+                    label = "WinGo",
                     icon = Icons.Filled.Bolt,
                     gradient = listOf(AmberGoldTop, AmberOrangeDeep),
                     onClick = { onOpenGameMode(GameMode.MODE_30S) }
                 )
                 CategoryBadgeItem(
-                    label = "1 Min",
-                    icon = Icons.Filled.Timer,
-                    gradient = listOf(NeonEmerald, Color(0xFF0A8A45)),
-                    onClick = { onOpenGameMode(GameMode.MODE_60S) }
-                )
-                CategoryBadgeItem(
-                    label = "3 Min",
-                    icon = Icons.Filled.SportsEsports,
+                    label = "Spin",
+                    icon = Icons.Filled.Refresh,
                     gradient = listOf(ElectricViolet, RoyalIndigoPill),
-                    onClick = { onOpenGameMode(GameMode.MODE_3M) }
+                    onClick = { onOpenMiniGame(0) }
                 )
                 CategoryBadgeItem(
-                    label = "5 Min",
-                    icon = Icons.Filled.Star,
+                    label = "Mines",
+                    icon = Icons.Filled.Diamond,
+                    gradient = listOf(NeonEmerald, Color(0xFF0A8A45)),
+                    onClick = { onOpenMiniGame(1) }
+                )
+                CategoryBadgeItem(
+                    label = "Dice",
+                    icon = Icons.Filled.Casino,
                     gradient = listOf(CyanPulse, Color(0xFF3B6BE8)),
-                    onClick = { onOpenGameMode(GameMode.MODE_5M) }
+                    onClick = { onOpenMiniGame(2) }
                 )
                 CategoryBadgeItem(
-                    label = "Rankings",
-                    icon = Icons.Filled.EmojiEvents,
+                    label = "QR Hub",
+                    icon = Icons.Filled.QrCode2,
                     gradient = listOf(RubyRed, Color(0xFFD93654)),
-                    onClick = onOpenLeaderboard
+                    onClick = onOpenQrCenter
                 )
             }
         }
@@ -381,60 +398,20 @@ fun HomeScreen(
         item {
             PlayerPulseStatsStrip(
                 profile = profile,
-                onOpenProfile = onOpenProfile
+                onOpenProfile = onOpenLeaderboard
             )
         }
 
-        // Section Header: WinGo Live Games (Matching Screenshot #3 "Lottery ... All")
+        // Section Header: WinGo Live Games
         item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier
-                            .size(24.dp)
-                            .clip(CircleShape)
-                            .background(AmberGoldTop)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Star,
-                            contentDescription = null,
-                            tint = ObsidianCanvas,
-                            modifier = Modifier.size(15.dp)
-                        )
-                    }
-                    Text(
-                        text = "WinGo Color Arenas",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = TextPrimary
-                    )
-                }
-
-                Surface(
-                    onClick = { onOpenGameMode(GameMode.MODE_30S) },
-                    shape = RoundedCornerShape(8.dp),
-                    color = ObsidianCardElevated
-                ) {
-                    Text(
-                        text = "All",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = TextPrimary,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
-                    )
-                }
-            }
+            LobbySectionHeader(
+                title = "WinGo Color Arenas",
+                actionLabel = "All",
+                onAction = { onOpenGameMode(GameMode.MODE_30S) }
+            )
         }
 
-        // 2x2 Vibrant ShreeWin Gradient Game Mode Cards
+        // 2x2 Vibrant ShreeWin Gradient WinGo Cards
         item {
             val modes = GameMode.entries
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -488,6 +465,53 @@ fun HomeScreen(
                         modifier = Modifier.weight(1f)
                     )
                 }
+            }
+        }
+
+        // Section Header: Mini Games Arcade (Spin Wheel, Color Mines, Cyber Dice)
+        item {
+            LobbySectionHeader(
+                title = "Recommended Mini Games",
+                actionLabel = "Play",
+                onAction = { onOpenMiniGame(0) }
+            )
+        }
+
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                MiniGamePromoTile(
+                    title = "Spin Wheel",
+                    subtitle = "Win 1,000 VC",
+                    icon = Icons.Filled.Refresh,
+                    gradient = listOf(Color(0xFFEC4899), Color(0xFF7E22CE)),
+                    onClick = { onOpenMiniGame(0) },
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("home_minigame_spin")
+                )
+                MiniGamePromoTile(
+                    title = "Color Mines",
+                    subtitle = "Up to 25x",
+                    icon = Icons.Filled.Diamond,
+                    gradient = listOf(Color(0xFF10B981), Color(0xFF047857)),
+                    onClick = { onOpenMiniGame(1) },
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("home_minigame_mines")
+                )
+                MiniGamePromoTile(
+                    title = "Cyber Dice",
+                    subtitle = "1–100 Fair",
+                    icon = Icons.Filled.Casino,
+                    gradient = listOf(Color(0xFF0EA5E9), Color(0xFF1D4ED8)),
+                    onClick = { onOpenMiniGame(2) },
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("home_minigame_dice")
+                )
             }
         }
 
@@ -594,6 +618,108 @@ fun HomeScreen(
 }
 
 @Composable
+private fun LobbySectionHeader(
+    title: String,
+    actionLabel: String,
+    onAction: () -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(24.dp)
+                    .clip(CircleShape)
+                    .background(AmberGoldTop)
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Star,
+                    contentDescription = null,
+                    tint = ObsidianCanvas,
+                    modifier = Modifier.size(15.dp)
+                )
+            }
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.ExtraBold,
+                color = TextPrimary
+            )
+        }
+
+        Surface(
+            onClick = onAction,
+            shape = RoundedCornerShape(8.dp),
+            color = ObsidianCardElevated
+        ) {
+            Text(
+                text = actionLabel,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                color = TextPrimary,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun MiniGamePromoTile(
+    title: String,
+    subtitle: String,
+    icon: ImageVector,
+    gradient: List<Color>,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(Brush.verticalGradient(gradient))
+            .clickable(onClick = onClick)
+            .padding(vertical = 14.dp, horizontal = 10.dp)
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(Color.White.copy(alpha = 0.2f))
+            ) {
+                Icon(imageVector = icon, contentDescription = title, tint = Color.White, modifier = Modifier.size(22.dp))
+            }
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.ExtraBold,
+                color = Color.White,
+                maxLines = 1
+            )
+            Text(
+                text = subtitle,
+                fontFamily = JetBrainsMonoFontFamily,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                color = CoinGoldSoft,
+                maxLines = 1
+            )
+        }
+    }
+}
+
+@Composable
 private fun CategoryBadgeItem(
     label: String,
     icon: ImageVector,
@@ -648,7 +774,7 @@ private fun FeaturedArenaHeroCard(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(176.dp)
+                .height(172.dp)
         ) {
             Image(
                 painter = painterResource(id = R.drawable.img_hero_arena),
@@ -729,12 +855,18 @@ private fun FeaturedArenaHeroCard(
                             .background(Brush.horizontalGradient(listOf(AmberGoldTop, AmberOrangeDeep)))
                             .padding(horizontal = 14.dp, vertical = 6.dp)
                     ) {
-                        Text(
-                            text = "PLAY NOW",
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = Color.White
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(3.dp)
+                        ) {
+                            Icon(Icons.Filled.PlayArrow, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
+                            Text(
+                                text = "PLAY",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = Color.White
+                            )
+                        }
                     }
                 }
             }
@@ -772,7 +904,13 @@ private fun PlayerPulseStatsStrip(
             PulseMiniMetric(label = "WIN RATE", value = "$winRate%", color = NeonEmeraldBright)
             PulseMiniMetric(label = "STREAK", value = "${streak}x", color = AmberGoldTop)
             PulseMiniMetric(label = "POINTS", value = formatCoins(points), color = CoinGoldSoft)
-            PulseMiniMetric(label = "GAMES", value = totalGames.toString(), color = ElectricVioletBright)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Icon(Icons.Filled.EmojiEvents, contentDescription = "Leaderboard", tint = AmberGoldTop, modifier = Modifier.size(16.dp))
+                Text("Ranks", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = TextPrimary)
+            }
         }
     }
 }

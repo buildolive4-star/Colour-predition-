@@ -16,12 +16,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.EmojiEvents
+import androidx.compose.material.icons.filled.Casino
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.SportsEsports
-import androidx.compose.material.icons.outlined.EmojiEvents
+import androidx.compose.material.icons.outlined.Casino
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Person
@@ -41,12 +41,12 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -63,10 +63,13 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.example.data.ChromaPulseRepository
 import com.example.domain.UiState
+import com.example.ui.components.QrCenterScreen
+import com.example.ui.screens.AdminPanelScreen
 import com.example.ui.screens.GameArenaScreen
 import com.example.ui.screens.HistoryScreen
 import com.example.ui.screens.HomeScreen
 import com.example.ui.screens.LeaderboardScreen
+import com.example.ui.screens.MiniGamesScreen
 import com.example.ui.screens.NotificationsSheet
 import com.example.ui.screens.ProfileScreen
 import com.example.ui.screens.VirtualWalletSheet
@@ -80,23 +83,26 @@ import com.example.ui.viewmodel.ChromaPulseViewModel
 
 const val ROUTE_HOME = "home"
 const val ROUTE_ARENA = "arena"
+const val ROUTE_MINIGAMES = "minigames"
 const val ROUTE_HISTORY = "history"
 const val ROUTE_LEADERBOARD = "leaderboard"
 const val ROUTE_PROFILE = "profile"
+const val ROUTE_QR_CENTER = "qr_center"
+const val ROUTE_ADMIN = "admin"
 
 private data class NavDestination(
     val route: String,
-    val labelRes: Int,
+    val label: String,
     val selectedIcon: ImageVector,
     val unselectedIcon: ImageVector
 )
 
 private val TopLevelDestinations = listOf(
-    NavDestination(ROUTE_HOME, R.string.nav_home, Icons.Filled.Home, Icons.Outlined.Home),
-    NavDestination(ROUTE_ARENA, R.string.nav_game, Icons.Filled.SportsEsports, Icons.Outlined.SportsEsports),
-    NavDestination(ROUTE_HISTORY, R.string.nav_history, Icons.Filled.History, Icons.Outlined.History),
-    NavDestination(ROUTE_LEADERBOARD, R.string.nav_leaderboard, Icons.Filled.EmojiEvents, Icons.Outlined.EmojiEvents),
-    NavDestination(ROUTE_PROFILE, R.string.nav_profile, Icons.Filled.Person, Icons.Outlined.Person)
+    NavDestination(ROUTE_HOME, "Home", Icons.Filled.Home, Icons.Outlined.Home),
+    NavDestination(ROUTE_ARENA, "WinGo", Icons.Filled.SportsEsports, Icons.Outlined.SportsEsports),
+    NavDestination(ROUTE_MINIGAMES, "Games", Icons.Filled.Casino, Icons.Outlined.Casino),
+    NavDestination(ROUTE_HISTORY, "History", Icons.Filled.History, Icons.Outlined.History),
+    NavDestination(ROUTE_PROFILE, "Account", Icons.Filled.Person, Icons.Outlined.Person)
 )
 
 class MainActivity : ComponentActivity() {
@@ -135,6 +141,9 @@ fun ChromaPulseApp() {
     val notificationsState by viewModel.notificationsState.collectAsStateWithLifecycle()
     val roundsState by viewModel.gameRoundsState.collectAsStateWithLifecycle()
     val leaderboardState by viewModel.leaderboardState.collectAsStateWithLifecycle()
+    val appConfig by viewModel.appConfigState.collectAsStateWithLifecycle()
+    val vouchers by viewModel.vouchersState.collectAsStateWithLifecycle()
+    val adminLogs by viewModel.adminLogsState.collectAsStateWithLifecycle()
 
     val selectedMode by viewModel.selectedMode.collectAsStateWithLifecycle()
     val activeRounds by viewModel.activeRounds.collectAsStateWithLifecycle()
@@ -158,6 +167,7 @@ fun ChromaPulseApp() {
     val snackbarHostState = remember { SnackbarHostState() }
     var showWalletSheet by remember { mutableStateOf(false) }
     var showNotificationsSheet by remember { mutableStateOf(false) }
+    var selectedMiniGameTab by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(viewModel) {
         viewModel.snackbarMessages.collect { message ->
@@ -175,6 +185,8 @@ fun ChromaPulseApp() {
         }
     }
 
+    val isFullScreenSubRoute = currentRoute == ROUTE_ADMIN || currentRoute == ROUTE_QR_CENTER || currentRoute == ROUTE_LEADERBOARD
+
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
@@ -187,7 +199,7 @@ fun ChromaPulseApp() {
             contentWindowInsets = WindowInsets.safeDrawing,
             snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
             bottomBar = {
-                if (!useNavRail) {
+                if (!useNavRail && !isFullScreenSubRoute) {
                     NavigationBar(
                         containerColor = ObsidianSurface,
                         tonalElevation = 0.dp
@@ -200,12 +212,12 @@ fun ChromaPulseApp() {
                                 icon = {
                                     Icon(
                                         imageVector = if (selected) dest.selectedIcon else dest.unselectedIcon,
-                                        contentDescription = stringResource(dest.labelRes)
+                                        contentDescription = dest.label
                                     )
                                 },
                                 label = {
                                     Text(
-                                        text = stringResource(dest.labelRes),
+                                        text = dest.label,
                                         style = MaterialTheme.typography.labelMedium
                                     )
                                 },
@@ -228,7 +240,7 @@ fun ChromaPulseApp() {
                     .fillMaxSize()
                     .padding(innerPadding)
             ) {
-                if (useNavRail) {
+                if (useNavRail && !isFullScreenSubRoute) {
                     NavigationRail(containerColor = ObsidianSurface) {
                         TopLevelDestinations.forEach { dest ->
                             val selected = currentRoute == dest.route
@@ -238,10 +250,10 @@ fun ChromaPulseApp() {
                                 icon = {
                                     Icon(
                                         imageVector = if (selected) dest.selectedIcon else dest.unselectedIcon,
-                                        contentDescription = stringResource(dest.labelRes)
+                                        contentDescription = dest.label
                                     )
                                 },
-                                label = { Text(stringResource(dest.labelRes)) },
+                                label = { Text(dest.label) },
                                 colors = NavigationRailItemDefaults.colors(
                                     selectedIconColor = AmberGoldTop,
                                     selectedTextColor = AmberGoldTop,
@@ -269,6 +281,7 @@ fun ChromaPulseApp() {
                         composable(ROUTE_HOME) {
                             HomeScreen(
                                 profile = profile,
+                                announcementText = appConfig.announcementText,
                                 activeRounds = activeRounds,
                                 recentOutcomesByMode = recentOutcomes,
                                 predictions = predictions,
@@ -278,11 +291,17 @@ fun ChromaPulseApp() {
                                     viewModel.selectMode(mode)
                                     navigateTopLevel(ROUTE_ARENA)
                                 },
+                                onOpenMiniGame = { tabIdx ->
+                                    selectedMiniGameTab = tabIdx
+                                    navigateTopLevel(ROUTE_MINIGAMES)
+                                },
+                                onOpenQrCenter = { navController.navigate(ROUTE_QR_CENTER) },
+                                onOpenAdminPanel = { navController.navigate(ROUTE_ADMIN) },
                                 onOpenWallet = { showWalletSheet = true },
                                 onOpenNotifications = { showNotificationsSheet = true },
                                 onOpenProfile = { navigateTopLevel(ROUTE_PROFILE) },
                                 onOpenHistory = { navigateTopLevel(ROUTE_HISTORY) },
-                                onOpenLeaderboard = { navigateTopLevel(ROUTE_LEADERBOARD) },
+                                onOpenLeaderboard = { navController.navigate(ROUTE_LEADERBOARD) },
                                 onClaimDailyBonus = { viewModel.claimDailyBonus() }
                             )
                         }
@@ -309,6 +328,18 @@ fun ChromaPulseApp() {
                             )
                         }
 
+                        composable(ROUTE_MINIGAMES) {
+                            MiniGamesScreen(
+                                initialGameTab = selectedMiniGameTab,
+                                profile = profile,
+                                onPlayMiniGameRound = { gameTitle, stake, reward, summary ->
+                                    viewModel.playMiniGameRound(gameTitle, stake, reward, summary)
+                                },
+                                onOpenWallet = { showWalletSheet = true },
+                                onBack = { navigateTopLevel(ROUTE_HOME) }
+                            )
+                        }
+
                         composable(ROUTE_HISTORY) {
                             HistoryScreen(
                                 firestoreRounds = savedRounds,
@@ -321,7 +352,8 @@ fun ChromaPulseApp() {
                         composable(ROUTE_LEADERBOARD) {
                             LeaderboardScreen(
                                 entries = leaderboardEntries,
-                                currentUserId = viewModel.currentUserId
+                                currentUserId = viewModel.currentUserId,
+                                onBack = { navController.popBackStack() }
                             )
                         }
 
@@ -330,9 +362,42 @@ fun ChromaPulseApp() {
                                 profile = profile,
                                 predictions = predictions,
                                 onOpenWallet = { showWalletSheet = true },
+                                onOpenQrCenter = { navController.navigate(ROUTE_QR_CENTER) },
+                                onOpenAdminPanel = { navController.navigate(ROUTE_ADMIN) },
+                                onOpenLeaderboard = { navController.navigate(ROUTE_LEADERBOARD) },
                                 onUpdateSettings = { name, res, close, bonus ->
                                     viewModel.updateProfileSettings(name, res, close, bonus)
                                 }
+                            )
+                        }
+
+                        composable(ROUTE_QR_CENTER) {
+                            QrCenterScreen(
+                                profile = profile,
+                                appConfig = appConfig,
+                                vouchers = vouchers,
+                                onRedeemVoucher = { code -> viewModel.redeemVoucherCode(code) },
+                                onBack = { navController.popBackStack() }
+                            )
+                        }
+
+                        composable(ROUTE_ADMIN) {
+                            AdminPanelScreen(
+                                profile = profile,
+                                appConfig = appConfig,
+                                vouchers = vouchers,
+                                adminLogs = adminLogs,
+                                totalPredictionsCount = predictions.size,
+                                onSaveConfig = { updated, summary ->
+                                    viewModel.adminSaveConfig(updated, summary)
+                                },
+                                onAdjustUserCoins = { delta, reason ->
+                                    viewModel.adminAdjustCoins(delta, reason)
+                                },
+                                onCreateVoucher = { amount, label ->
+                                    viewModel.adminCreateVoucher(amount, label)
+                                },
+                                onBack = { navController.popBackStack() }
                             )
                         }
                     }
