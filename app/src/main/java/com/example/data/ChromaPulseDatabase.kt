@@ -55,6 +55,9 @@ interface ChromaPulseDao {
     @Query("UPDATE notifications SET read = 1, updatedAtMs = :updatedAtMs WHERE id = :notificationId")
     suspend fun markNotificationRead(notificationId: String, updatedAtMs: Long)
 
+    @Query("UPDATE notifications SET read = 1, updatedAtMs = :updatedAtMs WHERE userId = :userId AND read = 0")
+    suspend fun markAllNotificationsRead(userId: String, updatedAtMs: Long)
+
     @Query("DELETE FROM notifications WHERE id = :notificationId")
     suspend fun deleteNotification(notificationId: String)
 

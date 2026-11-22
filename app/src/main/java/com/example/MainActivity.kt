@@ -271,6 +271,7 @@ fun ChromaPulseApp() {
                                 profile = profile,
                                 activeRounds = activeRounds,
                                 recentOutcomesByMode = recentOutcomes,
+                                predictions = predictions,
                                 unreadNotificationsCount = unreadCount,
                                 isClaimingBonus = isClaimingBonus,
                                 onOpenGameMode = { mode ->
@@ -298,6 +299,7 @@ fun ChromaPulseApp() {
                                 onSubmitPrediction = { mode, color, stake ->
                                     viewModel.submitPrediction(mode, color, stake)
                                 },
+                                onClaimDemoRefill = { viewModel.claimDemoRefill() },
                                 onDismissBanner = { viewModel.dismissBanner() },
                                 onOpenWallet = { showWalletSheet = true },
                                 onBack = { navigateTopLevel(ROUTE_HOME) }
@@ -323,6 +325,7 @@ fun ChromaPulseApp() {
                         composable(ROUTE_PROFILE) {
                             ProfileScreen(
                                 profile = profile,
+                                predictions = predictions,
                                 onOpenWallet = { showWalletSheet = true },
                                 onUpdateSettings = { name, res, close, bonus ->
                                     viewModel.updateProfileSettings(name, res, close, bonus)
@@ -340,6 +343,7 @@ fun ChromaPulseApp() {
                 transactions = transactions,
                 isClaimingBonus = isClaimingBonus,
                 onClaimDailyBonus = { viewModel.claimDailyBonus() },
+                onClaimDemoRefill = { viewModel.claimDemoRefill() },
                 onDismiss = { showWalletSheet = false }
             )
         }
@@ -348,6 +352,7 @@ fun ChromaPulseApp() {
             NotificationsSheet(
                 notifications = notifications,
                 onMarkRead = { viewModel.markNotificationRead(it) },
+                onMarkAllRead = { viewModel.markAllNotificationsRead() },
                 onDelete = { viewModel.deleteNotification(it) },
                 onDismiss = { showNotificationsSheet = false }
             )

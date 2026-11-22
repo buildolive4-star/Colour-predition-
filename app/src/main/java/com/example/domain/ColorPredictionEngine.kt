@@ -11,6 +11,8 @@ object ColorPredictionEngine {
 
     const val INITIAL_DEMO_COINS = 2500L
     const val DAILY_BONUS_COINS = 500L
+    const val DEMO_REFILL_THRESHOLD = 100L
+    const val DEMO_REFILL_COINS = 1000L
     const val MIN_STAKE_COINS = 10L
     const val MAX_STAKE_COINS = 100000L
 
@@ -179,5 +181,14 @@ object ColorPredictionEngine {
             totalVirtualPoints >= 7500L || totalWins >= 15L -> "Prism Tactician"
             totalVirtualPoints >= 1500L || totalWins >= 4L -> "Pulse Striker"
             else -> "Pulse Rookie"
+        }
+
+    fun resolveNextBadgeProgress(totalVirtualPoints: Long): Pair<String, Float> =
+        when {
+            totalVirtualPoints >= 50000L -> "Max Tier Reached" to 1f
+            totalVirtualPoints >= 20000L -> "Next: Grand Oracle (50,000 pts)" to ((totalVirtualPoints - 20000L) / 30000f).coerceIn(0f, 1f)
+            totalVirtualPoints >= 7500L -> "Next: Chroma Master (20,000 pts)" to ((totalVirtualPoints - 7500L) / 12500f).coerceIn(0f, 1f)
+            totalVirtualPoints >= 1500L -> "Next: Prism Tactician (7,500 pts)" to ((totalVirtualPoints - 1500L) / 6000f).coerceIn(0f, 1f)
+            else -> "Next: Pulse Striker (1,500 pts)" to (totalVirtualPoints / 1500f).coerceIn(0f, 1f)
         }
 }

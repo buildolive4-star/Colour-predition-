@@ -28,8 +28,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -70,11 +72,13 @@ fun VirtualWalletSheet(
     transactions: List<WalletTransaction>,
     isClaimingBonus: Boolean,
     onClaimDailyBonus: () -> Unit,
+    onClaimDemoRefill: () -> Unit,
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val todayUtc = remember { ColorPredictionEngine.formatUtcIsoDate(System.currentTimeMillis()) }
     val claimedToday = profile?.lastDailyBonusDate == todayUtc
+    val canClaimRefill = (profile?.virtualCoins ?: 0L) < ColorPredictionEngine.DEMO_REFILL_THRESHOLD
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -148,6 +152,26 @@ fun VirtualWalletSheet(
                             fontWeight = FontWeight.Bold
                         )
                     }
+
+                    if (canClaimRefill) {
+                        OutlinedButton(
+                            onClick = onClaimDemoRefill,
+                            enabled = !isClaimingBonus,
+                            shape = RoundedCornerShape(14.dp),
+                            border = BorderStroke(1.dp, CyanPulse.copy(alpha = 0.7f)),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = CyanPulse),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(46.dp)
+                                .testTag("wallet_sheet_demo_refill_button")
+                        ) {
+                            Text(
+                                text = "Low Balance? Free Virtual Refill (+1,000 VC)",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
                 }
             }
 
@@ -185,10 +209,12 @@ fun VirtualWalletSheet(
 fun NotificationsSheet(
     notifications: List<UserNotification>,
     onMarkRead: (String) -> Unit,
+    onMarkAllRead: () -> Unit,
     onDelete: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val unreadCount = remember(notifications) { notifications.count { !it.read } }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -223,12 +249,26 @@ fun NotificationsSheet(
                         color = TextPrimary
                     )
                 }
-                Text(
-                    text = "${notifications.count { !it.read }} unread",
-                    fontFamily = JetBrainsMonoFontFamily,
-                    fontSize = 11.sp,
-                    color = CyanPulse
-                )
+                if (unreadCount > 0) {
+                    TextButton(
+                        onClick = onMarkAllRead,
+                        modifier = Modifier.testTag("notifications_mark_all_read")
+                    ) {
+                        Text(
+                            text = "Mark all read ($unreadCount)",
+                            fontFamily = JetBrainsMonoFontFamily,
+                            fontSize = 11.sp,
+                            color = CyanPulse
+                        )
+                    }
+                } else {
+                    Text(
+                        text = "0 unread",
+                        fontFamily = JetBrainsMonoFontFamily,
+                        fontSize = 11.sp,
+                        color = TextSecondary
+                    )
+                }
             }
 
             if (notifications.isEmpty()) {

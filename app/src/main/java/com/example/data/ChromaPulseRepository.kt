@@ -421,9 +421,74 @@ class ChromaPulseRepository(
             Result.failure(e)
         }
 
+    suspend fun claimDemoRefill(userId: String = DEFAULT_USER_ID): Result<Long> =
+        try {
+            val refillAmount = ColorPredictionEngine.DEMO_REFILL_COINS
+            val threshold = ColorPredictionEngine.DEMO_REFILL_THRESHOLD
+            val now = System.currentTimeMillis()
+            val txId = "refill_$now"
+
+            db.withTransaction {
+                val user = dao.getUserProfile(userId) ?: error("Player wallet not ready.")
+                if (user.virtualCoins >= threshold) {
+                    throw IllegalStateException("Free demo refill unlocks when your balance is below $threshold VC.")
+                }
+                val newCoins = user.virtualCoins + refillAmount
+                dao.updateUserProfile(
+                    user.copy(
+                        virtualCoins = newCoins,
+                        updatedAtMs = now
+                    )
+                )
+                dao.insertWalletTransaction(
+                    WalletTransaction(
+                        id = txId,
+                        userId = userId,
+                        txType = "DEMO_REFILL",
+                        amount = refillAmount,
+                        previousBalance = user.virtualCoins,
+                        newBalance = newCoins,
+                        referenceId = txId,
+                        description = "Free virtual demo coin refill (entertainment only)",
+                        createdAtMs = now
+                    )
+                )
+                if (user.notifyBonuses) {
+                    dao.insertNotification(
+                        UserNotification(
+                            id = "notif_$txId",
+                            userId = userId,
+                            category = "DAILY_BONUS",
+                            title = "Demo Wallet Refilled",
+                            message = "+$refillAmount virtual demo coins credited so you can keep playing.",
+                            referenceId = txId,
+                            read = false,
+                            createdAtMs = now,
+                            updatedAtMs = now
+                        )
+                    )
+                }
+            }
+            Result.success(refillAmount)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+
     suspend fun markNotificationRead(notificationId: String): Result<Unit> =
         try {
             dao.markNotificationRead(notificationId, System.currentTimeMillis())
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+
+    suspend fun markAllNotificationsRead(userId: String = DEFAULT_USER_ID): Result<Unit> =
+        try {
+            dao.markAllNotificationsRead(userId, System.currentTimeMillis())
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e

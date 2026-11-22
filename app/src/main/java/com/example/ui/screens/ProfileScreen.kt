@@ -24,6 +24,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -38,14 +39,18 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.PredictionRecord
 import com.example.data.UserProfile
 import com.example.domain.ColorPredictionEngine
+import com.example.domain.PredictionColor
 import com.example.ui.components.VirtualDisclaimerBanner
+import com.example.ui.components.brightColor
 import com.example.ui.components.formatCoins
 import com.example.ui.components.formatTimestamp
 import com.example.ui.theme.CoinGold
@@ -66,6 +71,7 @@ import com.example.ui.theme.TextSecondary
 @Composable
 fun ProfileScreen(
     profile: UserProfile?,
+    predictions: List<PredictionRecord>,
     onOpenWallet: () -> Unit,
     onUpdateSettings: (String, Boolean, Boolean, Boolean) -> Unit
 ) {
@@ -74,12 +80,14 @@ fun ProfileScreen(
     val displayName = profile?.displayName ?: "Chroma Player"
     val totalGames = profile?.totalGames ?: 0L
     val totalWins = profile?.totalWins ?: 0L
+    val totalPoints = profile?.totalVirtualPoints ?: 0L
     val winRate = if (totalGames > 0L) ((totalWins * 100L) / totalGames).toInt() else 0
     val badgeTitle = ColorPredictionEngine.resolveBadgeTitle(
-        totalVirtualPoints = profile?.totalVirtualPoints ?: 0L,
+        totalVirtualPoints = totalPoints,
         totalWins = totalWins,
         bestStreak = profile?.bestStreak ?: 0L
     )
+    val (nextBadgeLabel, nextBadgeProgress) = ColorPredictionEngine.resolveNextBadgeProgress(totalPoints)
 
     LazyColumn(
         modifier = Modifier
@@ -214,6 +222,97 @@ fun ProfileScreen(
                         accent = CyanPulse,
                         modifier = Modifier.weight(1f)
                     )
+                }
+            }
+        }
+
+        // Rank Progression & Color Mastery Card
+        item {
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = ObsidianCard,
+                border = BorderStroke(1.dp, ObsidianBorder),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Rank Progression",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = TextPrimary
+                        )
+                        Text(
+                            text = "${(nextBadgeProgress * 100).toInt()}%",
+                            fontFamily = JetBrainsMonoFontFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp,
+                            color = ElectricVioletBright
+                        )
+                    }
+                    LinearProgressIndicator(
+                        progress = { nextBadgeProgress },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(7.dp)
+                            .clip(RoundedCornerShape(50)),
+                        color = ElectricVioletBright,
+                        trackColor = ObsidianCanvas
+                    )
+                    Text(
+                        text = nextBadgeLabel,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextSecondary
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        PredictionColor.entries.forEach { color ->
+                            val picks = predictions.count { it.selectedColor.equals(color.name, ignoreCase = true) }
+                            val wins = predictions.count {
+                                it.selectedColor.equals(color.name, ignoreCase = true) && it.status == "WON"
+                            }
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = ObsidianCanvas,
+                                border = BorderStroke(1.dp, ObsidianBorder),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(vertical = 8.dp, horizontal = 6.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Text(
+                                        text = color.displayName.uppercase(),
+                                        fontFamily = JetBrainsMonoFontFamily,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 10.sp,
+                                        color = color.brightColor()
+                                    )
+                                    Text(
+                                        text = "$wins/$picks",
+                                        fontFamily = JetBrainsMonoFontFamily,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp,
+                                        color = TextPrimary
+                                    )
+                                    Text(
+                                        text = "Wins",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = TextSecondary
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

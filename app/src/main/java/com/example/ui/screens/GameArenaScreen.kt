@@ -56,6 +56,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -112,10 +114,12 @@ fun GameArenaScreen(
     isSubmitting: Boolean,
     onSelectMode: (GameMode) -> Unit,
     onSubmitPrediction: (GameMode, PredictionColor, Long) -> Unit,
+    onClaimDemoRefill: () -> Unit,
     onDismissBanner: () -> Unit,
     onOpenWallet: () -> Unit,
     onBack: () -> Unit
 ) {
+    val haptic = LocalHapticFeedback.current
     val activeRound = activeRounds[selectedMode]
     val modePredictions = remember(predictions, selectedMode) {
         predictions.filter { it.modeId == selectedMode.id }
@@ -272,7 +276,10 @@ fun GameArenaScreen(
                             color = color,
                             isSelected = selectedColor == color,
                             enabled = canInteract,
-                            onClick = { selectedColor = color },
+                            onClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                selectedColor = color
+                            },
                             modifier = Modifier.weight(1f)
                         )
                     }
@@ -345,7 +352,12 @@ fun GameArenaScreen(
                         STAKE_PRESETS.forEach { preset ->
                             val isSelected = stakeCoins == preset
                             Surface(
-                                onClick = { if (canInteract) stakeCoins = preset },
+                                onClick = {
+                                    if (canInteract) {
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        stakeCoins = preset
+                                    }
+                                },
                                 shape = RoundedCornerShape(10.dp),
                                 color = if (isSelected) CoinGold.copy(alpha = 0.22f) else ObsidianCanvas,
                                 border = BorderStroke(
@@ -374,6 +386,52 @@ fun GameArenaScreen(
                         }
                     }
 
+                    // Quick Scale Helpers (1/2, 2x, MAX)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        val maxStake = availableCoins.coerceIn(
+                            ColorPredictionEngine.MIN_STAKE_COINS,
+                            ColorPredictionEngine.MAX_STAKE_COINS
+                        )
+                        listOf(
+                            "½" to { (stakeCoins / 2L).coerceAtLeast(ColorPredictionEngine.MIN_STAKE_COINS) },
+                            "2x" to { (stakeCoins * 2L).coerceAtMost(maxStake) },
+                            "MAX" to { maxStake }
+                        ).forEach { (label, nextStake) ->
+                            Surface(
+                                onClick = {
+                                    if (canInteract && availableCoins >= ColorPredictionEngine.MIN_STAKE_COINS) {
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        stakeCoins = nextStake()
+                                    }
+                                },
+                                shape = RoundedCornerShape(10.dp),
+                                color = ObsidianCardElevated,
+                                border = BorderStroke(1.dp, ObsidianBorder),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("stake_scale_${label.lowercase()}")
+                            ) {
+                                Box(
+                                    contentAlignment = Alignment.Center,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 6.dp)
+                                ) {
+                                    Text(
+                                        text = label,
+                                        fontFamily = JetBrainsMonoFontFamily,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 11.sp,
+                                        color = CyanPulse
+                                    )
+                                }
+                            }
+                        }
+                    }
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
@@ -393,7 +451,10 @@ fun GameArenaScreen(
                     }
 
                     Button(
-                        onClick = { onSubmitPrediction(selectedMode, selectedColor, stakeCoins) },
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onSubmitPrediction(selectedMode, selectedColor, stakeCoins)
+                        },
                         enabled = canInteract && availableCoins >= stakeCoins,
                         shape = RoundedCornerShape(16.dp),
                         colors = ButtonDefaults.buttonColors(
@@ -446,12 +507,44 @@ fun GameArenaScreen(
                             }
                         }
                     }
+
+                    if (availableCoins < ColorPredictionEngine.DEMO_REFILL_THRESHOLD) {
+                        Button(
+                            onClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                onClaimDemoRefill()
+                            },
+                            shape = RoundedCornerShape(14.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = CoinGold,
+                                contentColor = ObsidianCanvas
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .testTag("arena_free_refill_button")
+                        ) {
+                            Text(
+                                text = "Free Virtual Refill (+1,000 VC)",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
                 }
             }
         }
 
-        // Last 10 Verifiable Results for This Mode
+        // Last 20 Verifiable Results & Live Color Trend
         item {
+            val totalCount = recentOutcomes.size.coerceAtLeast(1)
+            val redCount = recentOutcomes.count { it.winningColor == PredictionColor.RED }
+            val greenCount = recentOutcomes.count { it.winningColor == PredictionColor.GREEN }
+            val violetCount = recentOutcomes.count { it.winningColor == PredictionColor.VIOLET }
+            val redPct = (redCount * 100) / totalCount
+            val greenPct = (greenCount * 100) / totalCount
+            val violetPct = (violetCount * 100) / totalCount
+
             Surface(
                 shape = RoundedCornerShape(20.dp),
                 color = ObsidianCard,
@@ -465,7 +558,7 @@ fun GameArenaScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "Last 10 Completed Rounds",
+                            text = "Last ${recentOutcomes.size} Rounds & Trend",
                             style = MaterialTheme.typography.titleMedium,
                             color = TextPrimary
                         )
@@ -487,9 +580,76 @@ fun GameArenaScreen(
                             )
                         }
                     }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Segmented Color Trend Distribution Bar
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(8.dp)
+                            .clip(RoundedCornerShape(50))
+                            .background(ObsidianCanvas),
+                        horizontalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        if (redCount > 0) {
+                            Box(
+                                modifier = Modifier
+                                    .weight(redCount.toFloat())
+                                    .fillMaxSize()
+                                    .background(RubyRed)
+                            )
+                        }
+                        if (greenCount > 0) {
+                            Box(
+                                modifier = Modifier
+                                    .weight(greenCount.toFloat())
+                                    .fillMaxSize()
+                                    .background(NeonEmerald)
+                            )
+                        }
+                        if (violetCount > 0) {
+                            Box(
+                                modifier = Modifier
+                                    .weight(violetCount.toFloat())
+                                    .fillMaxSize()
+                                    .background(ElectricViolet)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "RED $redPct%",
+                            fontFamily = JetBrainsMonoFontFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp,
+                            color = RubyRedBright
+                        )
+                        Text(
+                            text = "GREEN $greenPct%",
+                            fontFamily = JetBrainsMonoFontFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp,
+                            color = NeonEmeraldBright
+                        )
+                        Text(
+                            text = "VIOLET $violetPct%",
+                            fontFamily = JetBrainsMonoFontFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp,
+                            color = ElectricVioletBright
+                        )
+                    }
+
                     Spacer(modifier = Modifier.height(12.dp))
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        items(recentOutcomes, key = { it.roundDocId }) { outcome ->
+                        items(recentOutcomes.take(15), key = { it.roundDocId }) { outcome ->
                             Column(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 verticalArrangement = Arrangement.spacedBy(4.dp),

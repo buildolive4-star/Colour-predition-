@@ -71,5 +71,11 @@ class ColorPredictionEngineTest {
         assertEquals("00:00", ColorPredictionEngine.formatCountdown(0L))
         assertEquals("Pulse Rookie", ColorPredictionEngine.resolveBadgeTitle(0L, 0L, 0L))
         assertEquals("Grand Oracle", ColorPredictionEngine.resolveBadgeTitle(60_000L, 12L, 4L))
+        val (nextLabel, progress) = ColorPredictionEngine.resolveNextBadgeProgress(750L)
+        assertTrue(nextLabel.contains("Pulse Striker"))
+        assertEquals(0.5f, progress, 0.01f)
+        val (maxLabel, maxProgress) = ColorPredictionEngine.resolveNextBadgeProgress(60_000L)
+        assertEquals("Max Tier Reached", maxLabel)
+        assertEquals(1f, maxProgress, 0.001f)
     }
 }

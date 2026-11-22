@@ -304,9 +304,30 @@ class ChromaPulseViewModel(
         }
     }
 
+    fun claimDemoRefill() {
+        if (_isClaimingBonus.value) return
+        viewModelScope.launch {
+            _isClaimingBonus.value = true
+            repository.claimDemoRefill(currentUserId)
+                .onSuccess { refill ->
+                    _snackbarMessages.tryEmit("+$refill virtual demo coins refilled!")
+                }
+                .onFailure { err ->
+                    _snackbarMessages.tryEmit(err.localizedMessage ?: "Demo refill unavailable.")
+                }
+            _isClaimingBonus.value = false
+        }
+    }
+
     fun markNotificationRead(notificationId: String) {
         viewModelScope.launch {
             repository.markNotificationRead(notificationId)
+        }
+    }
+
+    fun markAllNotificationsRead() {
+        viewModelScope.launch {
+            repository.markAllNotificationsRead(currentUserId)
         }
     }
 
@@ -327,7 +348,7 @@ class ChromaPulseViewModel(
 
         fun buildRecentOutcomesMap(nowMs: Long): Map<GameMode, List<VerifiableRoundOutcome>> =
             GameMode.entries.associateWith { mode ->
-                ColorPredictionEngine.computeRecentCompletedRounds(mode, nowMs, 10)
+                ColorPredictionEngine.computeRecentCompletedRounds(mode, nowMs, 20)
             }
     }
 }

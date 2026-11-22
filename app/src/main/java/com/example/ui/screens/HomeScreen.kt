@@ -56,6 +56,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
+import com.example.data.PredictionRecord
 import com.example.data.UserProfile
 import com.example.domain.ActiveRoundSnapshot
 import com.example.domain.ColorPredictionEngine
@@ -67,7 +68,7 @@ import com.example.ui.components.RoundStatusChip
 import com.example.ui.components.RoundVerificationDialog
 import com.example.ui.components.VirtualCoinBalancePill
 import com.example.ui.components.VirtualDisclaimerBanner
-import com.example.ui.components.accentColor
+import com.example.ui.components.formatCoins
 import com.example.ui.components.formatEpochMs
 import com.example.ui.theme.CoinGold
 import com.example.ui.theme.CoinGoldSoft
@@ -76,6 +77,7 @@ import com.example.ui.theme.ElectricViolet
 import com.example.ui.theme.ElectricVioletBright
 import com.example.ui.theme.JetBrainsMonoFontFamily
 import com.example.ui.theme.NeonEmerald
+import com.example.ui.theme.NeonEmeraldBright
 import com.example.ui.theme.ObsidianBorder
 import com.example.ui.theme.ObsidianCanvas
 import com.example.ui.theme.ObsidianCard
@@ -90,6 +92,7 @@ fun HomeScreen(
     profile: UserProfile?,
     activeRounds: Map<GameMode, ActiveRoundSnapshot>,
     recentOutcomesByMode: Map<GameMode, List<VerifiableRoundOutcome>>,
+    predictions: List<PredictionRecord>,
     unreadNotificationsCount: Int,
     isClaimingBonus: Boolean,
     onOpenGameMode: (GameMode) -> Unit,
@@ -102,8 +105,15 @@ fun HomeScreen(
     val todayUtc = remember { ColorPredictionEngine.formatUtcIsoDate(System.currentTimeMillis()) }
     val bonusClaimedToday = profile?.lastDailyBonusDate == todayUtc
     val featuredRound = activeRounds[GameMode.MODE_30S]
-    val recent30s = recentOutcomesByMode[GameMode.MODE_30S].orEmpty()
+    val recent30s = recentOutcomesByMode[GameMode.MODE_30S].orEmpty().take(12)
     var inspectedOutcome by remember { mutableStateOf<VerifiableRoundOutcome?>(null) }
+
+    val activePickedModes = remember(predictions, activeRounds) {
+        GameMode.entries.filter { mode ->
+            val currentPeriod = activeRounds[mode]?.periodId ?: return@filter false
+            predictions.any { it.modeId == mode.id && it.periodId == currentPeriod }
+        }.toSet()
+    }
 
     LazyColumn(
         modifier = Modifier
@@ -202,6 +212,14 @@ fun HomeScreen(
             )
         }
 
+        // Player Pulse Quick Stats Strip
+        item {
+            PlayerPulseStatsStrip(
+                profile = profile,
+                onOpenProfile = onOpenProfile
+            )
+        }
+
         // Daily Login Bonus Banner
         item {
             DailyBonusCard(
@@ -244,6 +262,7 @@ fun HomeScreen(
                     GameModeLiveCard(
                         mode = modes[0],
                         round = activeRounds[modes[0]],
+                        hasActivePick = modes[0] in activePickedModes,
                         accent = RubyRed,
                         onClick = { onOpenGameMode(modes[0]) },
                         modifier = Modifier.weight(1f)
@@ -251,6 +270,7 @@ fun HomeScreen(
                     GameModeLiveCard(
                         mode = modes[1],
                         round = activeRounds[modes[1]],
+                        hasActivePick = modes[1] in activePickedModes,
                         accent = NeonEmerald,
                         onClick = { onOpenGameMode(modes[1]) },
                         modifier = Modifier.weight(1f)
@@ -263,6 +283,7 @@ fun HomeScreen(
                     GameModeLiveCard(
                         mode = modes[2],
                         round = activeRounds[modes[2]],
+                        hasActivePick = modes[2] in activePickedModes,
                         accent = ElectricViolet,
                         onClick = { onOpenGameMode(modes[2]) },
                         modifier = Modifier.weight(1f)
@@ -270,6 +291,7 @@ fun HomeScreen(
                     GameModeLiveCard(
                         mode = modes[3],
                         round = activeRounds[modes[3]],
+                        hasActivePick = modes[3] in activePickedModes,
                         accent = CyanPulse,
                         onClick = { onOpenGameMode(modes[3]) },
                         modifier = Modifier.weight(1f)
@@ -579,9 +601,64 @@ private fun DailyBonusCard(
 }
 
 @Composable
+private fun PlayerPulseStatsStrip(
+    profile: UserProfile?,
+    onOpenProfile: () -> Unit
+) {
+    val totalGames = profile?.totalGames ?: 0L
+    val totalWins = profile?.totalWins ?: 0L
+    val winRate = if (totalGames > 0L) ((totalWins * 100L) / totalGames).toInt() else 0
+    val streak = profile?.currentStreak ?: 0L
+    val points = profile?.totalVirtualPoints ?: 0L
+
+    Surface(
+        onClick = onOpenProfile,
+        shape = RoundedCornerShape(18.dp),
+        color = ObsidianCard,
+        border = BorderStroke(1.dp, ObsidianBorder),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("home_stats_strip")
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            PulseMiniMetric(label = "WIN RATE", value = "$winRate%", color = NeonEmeraldBright)
+            PulseMiniMetric(label = "STREAK", value = "${streak}x", color = CyanPulse)
+            PulseMiniMetric(label = "POINTS", value = formatCoins(points), color = CoinGoldSoft)
+            PulseMiniMetric(label = "GAMES", value = totalGames.toString(), color = ElectricVioletBright)
+        }
+    }
+}
+
+@Composable
+private fun PulseMiniMetric(label: String, value: String, color: Color) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            text = value,
+            fontFamily = JetBrainsMonoFontFamily,
+            fontWeight = FontWeight.Bold,
+            fontSize = 15.sp,
+            color = color
+        )
+        Text(
+            text = label,
+            fontFamily = JetBrainsMonoFontFamily,
+            fontSize = 9.sp,
+            color = TextSecondary
+        )
+    }
+}
+
+@Composable
 private fun GameModeLiveCard(
     mode: GameMode,
     round: ActiveRoundSnapshot?,
+    hasActivePick: Boolean,
     accent: Color,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
@@ -593,7 +670,11 @@ private fun GameModeLiveCard(
         color = ObsidianCard,
         border = BorderStroke(
             1.dp,
-            if (isLocked) RubyRed.copy(alpha = 0.55f) else accent.copy(alpha = 0.35f)
+            when {
+                hasActivePick -> CoinGold.copy(alpha = 0.75f)
+                isLocked -> RubyRed.copy(alpha = 0.55f)
+                else -> accent.copy(alpha = 0.35f)
+            }
         ),
         modifier = modifier.testTag("mode_card_${mode.id}")
     ) {
@@ -631,11 +712,19 @@ private fun GameModeLiveCard(
                     }
                 }
                 Text(
-                    text = if (isLocked) "LOCKED" else "LIVE",
+                    text = when {
+                        hasActivePick -> "PICKED"
+                        isLocked -> "LOCKED"
+                        else -> "LIVE"
+                    },
                     fontFamily = JetBrainsMonoFontFamily,
                     fontWeight = FontWeight.Bold,
                     fontSize = 10.sp,
-                    color = if (isLocked) RubyRed else NeonEmerald
+                    color = when {
+                        hasActivePick -> CoinGoldSoft
+                        isLocked -> RubyRed
+                        else -> NeonEmerald
+                    }
                 )
             }
 
