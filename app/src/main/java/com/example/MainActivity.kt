@@ -41,20 +41,16 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import androidx.credentials.CredentialManager
 import androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory.Companion.APPLICATION_KEY
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -65,11 +61,8 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import com.example.auth.authStateFlow
-import com.example.auth.signOutUser
 import com.example.data.ChromaPulseRepository
 import com.example.domain.UiState
-import com.example.ui.screens.AuthScreen
 import com.example.ui.screens.GameArenaScreen
 import com.example.ui.screens.HistoryScreen
 import com.example.ui.screens.HomeScreen
@@ -84,9 +77,6 @@ import com.example.ui.theme.ObsidianCanvas
 import com.example.ui.theme.ObsidianSurface
 import com.example.ui.theme.TextSecondary
 import com.example.ui.viewmodel.ChromaPulseViewModel
-import com.google.firebase.Firebase
-import com.google.firebase.auth.auth
-import com.google.firebase.firestore.FirebaseFirestore
 
 const val ROUTE_HOME = "home"
 const val ROUTE_ARENA = "arena"
@@ -112,58 +102,32 @@ private val TopLevelDestinations = listOf(
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        if (com.google.firebase.FirebaseApp.getApps(this).isEmpty()) {
-            com.google.firebase.FirebaseApp.initializeApp(this)
-        }
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.dark(AndroidColor.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.dark(AndroidColor.TRANSPARENT)
         )
         setContent {
             ChromaPulseTheme {
-                ChromaPulseRoot()
+                ChromaPulseApp()
             }
         }
     }
 }
 
 @Composable
-fun ChromaPulseRoot() {
-    val auth = Firebase.auth
-    val currentUser by auth.authStateFlow().collectAsStateWithLifecycle(initialValue = auth.currentUser)
-    val user = currentUser
-
-    if (user == null) {
-        AuthScreen(onAuthSuccess = {})
-    } else {
-        key(user.uid) {
-            AuthenticatedChromaPulseApp(currentUserId = user.uid)
-        }
-    }
-}
-
-@Composable
-private fun AuthenticatedChromaPulseApp(currentUserId: String) {
+fun ChromaPulseApp() {
     val viewModel: ChromaPulseViewModel = viewModel(
-        key = currentUserId,
         factory = viewModelFactory {
             initializer {
                 val app = checkNotNull(this[APPLICATION_KEY]) {
                     "APPLICATION_KEY missing from CreationExtras"
                 }
-                val databaseId = app.getString(R.string.firestore_database_id)
-                val db = FirebaseFirestore.getInstance(databaseId)
                 ChromaPulseViewModel(
-                    repository = ChromaPulseRepository(db),
-                    currentUserId = currentUserId
+                    repository = ChromaPulseRepository(app)
                 )
             }
         }
     )
-
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val credentialManager = remember(context) { CredentialManager.create(context) }
 
     val profileState by viewModel.profileState.collectAsStateWithLifecycle()
     val predictionsState by viewModel.predictionsState.collectAsStateWithLifecycle()
@@ -183,7 +147,7 @@ private fun AuthenticatedChromaPulseApp(currentUserId: String) {
     val predictions = (predictionsState as? UiState.Success)?.data.orEmpty()
     val transactions = (walletState as? UiState.Success)?.data.orEmpty()
     val notifications = (notificationsState as? UiState.Success)?.data.orEmpty()
-    val firestoreRounds = (roundsState as? UiState.Success)?.data.orEmpty()
+    val savedRounds = (roundsState as? UiState.Success)?.data.orEmpty()
     val leaderboardEntries = (leaderboardState as? UiState.Success)?.data.orEmpty()
     val unreadCount = remember(notifications) { notifications.count { !it.read } }
 
@@ -342,7 +306,7 @@ private fun AuthenticatedChromaPulseApp(currentUserId: String) {
 
                         composable(ROUTE_HISTORY) {
                             HistoryScreen(
-                                firestoreRounds = firestoreRounds,
+                                firestoreRounds = savedRounds,
                                 recentOutcomesByMode = recentOutcomes,
                                 predictions = predictions,
                                 walletTransactions = transactions
@@ -352,7 +316,7 @@ private fun AuthenticatedChromaPulseApp(currentUserId: String) {
                         composable(ROUTE_LEADERBOARD) {
                             LeaderboardScreen(
                                 entries = leaderboardEntries,
-                                currentUserId = currentUserId
+                                currentUserId = viewModel.currentUserId
                             )
                         }
 
@@ -362,12 +326,6 @@ private fun AuthenticatedChromaPulseApp(currentUserId: String) {
                                 onOpenWallet = { showWalletSheet = true },
                                 onUpdateSettings = { name, res, close, bonus ->
                                     viewModel.updateProfileSettings(name, res, close, bonus)
-                                },
-                                onSignOut = {
-                                    signOutUser(
-                                        credentialManager = credentialManager,
-                                        scope = scope
-                                    )
                                 }
                             )
                         }

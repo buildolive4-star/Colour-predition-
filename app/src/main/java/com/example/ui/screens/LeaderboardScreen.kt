@@ -85,7 +85,7 @@ fun LeaderboardScreen(
         }
         entries.filter { entry ->
             if (cutoff == 0L) true
-            else (entry.updatedAt?.toDate()?.time ?: now) >= cutoff
+            else entry.updatedAtMs >= cutoff
         }
     }
 

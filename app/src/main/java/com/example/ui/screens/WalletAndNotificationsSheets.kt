@@ -243,7 +243,7 @@ fun NotificationsSheet(
                         .heightIn(max = 420.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    items(notifications, key = { it.id.ifBlank { it.title + it.createdAt } }) { notif ->
+                    items(notifications, key = { it.id.ifBlank { it.title + it.createdAtMs } }) { notif ->
                         Surface(
                             shape = RoundedCornerShape(16.dp),
                             color = if (!notif.read) ElectricViolet.copy(alpha = 0.14f) else ObsidianCard,
@@ -289,7 +289,7 @@ fun NotificationsSheet(
                                             color = TextSecondary
                                         )
                                         Text(
-                                            text = formatTimestamp(notif.createdAt),
+                                            text = formatTimestamp(notif.createdAtMs),
                                             fontFamily = JetBrainsMonoFontFamily,
                                             fontSize = 10.sp,
                                             color = TextSecondary.copy(alpha = 0.7f)

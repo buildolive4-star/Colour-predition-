@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.VerifiedUser
@@ -26,7 +25,6 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -42,11 +40,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.R
 import com.example.data.UserProfile
 import com.example.domain.ColorPredictionEngine
 import com.example.ui.components.VirtualDisclaimerBanner
@@ -64,8 +60,6 @@ import com.example.ui.theme.ObsidianBorder
 import com.example.ui.theme.ObsidianCanvas
 import com.example.ui.theme.ObsidianCard
 import com.example.ui.theme.ObsidianCardElevated
-import com.example.ui.theme.RubyRed
-import com.example.ui.theme.RubyRedBright
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 
@@ -73,8 +67,7 @@ import com.example.ui.theme.TextSecondary
 fun ProfileScreen(
     profile: UserProfile?,
     onOpenWallet: () -> Unit,
-    onUpdateSettings: (String, Boolean, Boolean, Boolean) -> Unit,
-    onSignOut: () -> Unit
+    onUpdateSettings: (String, Boolean, Boolean, Boolean) -> Unit
 ) {
     var showEditNameDialog by remember { mutableStateOf(false) }
 
@@ -133,7 +126,7 @@ fun ProfileScreen(
                                 color = TextPrimary
                             )
                             Text(
-                                text = profile?.email.orEmpty().ifBlank { "Google Account Connected" },
+                                text = profile?.email.orEmpty().ifBlank { "Instant Play • Local Profile" },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = TextSecondary
                             )
@@ -339,12 +332,12 @@ fun ProfileScreen(
                         )
                     }
                     Text(
-                        text = "Account Status: ${profile?.accountStatus ?: "ACTIVE"} • Joined ${formatTimestamp(profile?.createdAt)}",
+                        text = "Account Status: ${profile?.accountStatus ?: "ACTIVE"} • Joined ${formatTimestamp(profile?.createdAtMs)}",
                         style = MaterialTheme.typography.bodySmall,
                         color = TextSecondary
                     )
                     Text(
-                        text = "Secured via Google Sign-In and Cloud Firestore. All virtual balances have zero real-world monetary value.",
+                        text = "Instant Play • No Login Required. Your virtual wallet, predictions, and ledger are saved safely on this device with zero real-world monetary value.",
                         style = MaterialTheme.typography.bodySmall,
                         color = TextSecondary
                     )
@@ -353,28 +346,6 @@ fun ProfileScreen(
         }
 
         item { VirtualDisclaimerBanner() }
-
-        // Sign Out Button
-        item {
-            OutlinedButton(
-                onClick = onSignOut,
-                shape = RoundedCornerShape(16.dp),
-                border = BorderStroke(1.dp, RubyRed.copy(alpha = 0.65f)),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = RubyRedBright),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp)
-                    .testTag("profile_sign_out_button")
-            ) {
-                Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = null)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = stringResource(R.string.sign_out),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-        }
 
         item { Spacer(modifier = Modifier.height(14.dp)) }
     }

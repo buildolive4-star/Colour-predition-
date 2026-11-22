@@ -821,7 +821,7 @@ fun PredictionRowCard(prediction: PredictionRecord) {
                         color = TextSecondary
                     )
                     Text(
-                        text = formatTimestamp(prediction.createdAt),
+                        text = formatTimestamp(prediction.createdAtMs),
                         style = MaterialTheme.typography.bodySmall,
                         color = TextSecondary.copy(alpha = 0.75f)
                     )

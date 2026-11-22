@@ -63,7 +63,6 @@ import com.example.ui.theme.RubyRedBright
 import com.example.ui.theme.RubyRedDeep
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
-import com.google.firebase.Timestamp
 import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -90,8 +89,8 @@ fun PredictionColor.deepColor(): Color = when (this) {
 fun formatCoins(amount: Long): String =
     NumberFormat.getNumberInstance(Locale.US).format(amount)
 
-fun formatTimestamp(ts: Timestamp?): String {
-    val date = ts?.toDate() ?: Date()
+fun formatTimestamp(epochMs: Long?): String {
+    val date = Date(epochMs ?: System.currentTimeMillis())
     return SimpleDateFormat("MMM dd, HH:mm:ss", Locale.US).format(date)
 }
 

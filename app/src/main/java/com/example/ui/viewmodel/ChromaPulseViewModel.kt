@@ -16,9 +16,6 @@ import com.example.domain.GameMode
 import com.example.domain.PredictionColor
 import com.example.domain.UiState
 import com.example.domain.VerifiableRoundOutcome
-import com.google.firebase.Firebase
-import com.google.firebase.auth.auth
-import com.google.firebase.firestore.FirebaseFirestoreException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -48,7 +45,7 @@ data class RoundSettlementBanner(
 
 class ChromaPulseViewModel(
     private val repository: ChromaPulseRepository,
-    private val currentUserId: String
+    val currentUserId: String = ChromaPulseRepository.DEFAULT_USER_ID
 ) : ViewModel() {
 
     private val _selectedMode = MutableStateFlow(GameMode.MODE_30S)
@@ -73,45 +70,41 @@ class ChromaPulseViewModel(
     val snackbarMessages: SharedFlow<String> = _snackbarMessages.asSharedFlow()
 
     val profileState: StateFlow<UiState<UserProfile?>> = repository.observeUserProfile(currentUserId)
-        .toUiStateFlow("Failed to observe player profile")
+        .toUiStateFlow("Failed to load player profile")
 
     val predictionsState: StateFlow<UiState<List<PredictionRecord>>> = repository.observePredictions(currentUserId)
-        .toUiStateFlow("Failed to observe predictions")
+        .toUiStateFlow("Failed to load predictions")
 
     val walletTransactionsState: StateFlow<UiState<List<WalletTransaction>>> =
         repository.observeWalletTransactions(currentUserId)
-            .toUiStateFlow("Failed to observe wallet ledger")
+            .toUiStateFlow("Failed to load wallet ledger")
 
     val notificationsState: StateFlow<UiState<List<UserNotification>>> =
         repository.observeNotifications(currentUserId)
-            .toUiStateFlow("Failed to observe notifications")
+            .toUiStateFlow("Failed to load notifications")
 
     val gameRoundsState: StateFlow<UiState<List<GameRoundRecord>>> =
-        repository.observeGameRounds(currentUserId)
-            .toUiStateFlow("Failed to observe round history")
+        repository.observeGameRounds()
+            .toUiStateFlow("Failed to load round history")
 
     val leaderboardState: StateFlow<UiState<List<LeaderboardEntry>>> =
-        repository.observeLeaderboard(currentUserId)
-            .toUiStateFlow("Failed to observe leaderboard")
+        repository.observeLeaderboard()
+            .toUiStateFlow("Failed to load leaderboard")
 
     private val settlingIds = mutableSetOf<String>()
     private val publishedRoundIds = mutableSetOf<String>()
     private val lastPeriodByMode = mutableMapOf<GameMode, String>()
 
     init {
-        initializeUserAndEngine()
+        initializeLocalPlayerAndEngine()
     }
 
     private fun <T> Flow<T>.toUiStateFlow(fallbackMessage: String): StateFlow<UiState<T>> =
         this.map<T, UiState<T>> { UiState.Success(it) }
             .catch { error ->
-                val firestoreError = generateSequence(error) { it.cause }
-                    .filterIsInstance<FirebaseFirestoreException>()
-                    .firstOrNull()
-                if (firestoreError == null && error is CancellationException) throw error
-                val rootError = firestoreError ?: error
-                Log.w(TAG, fallbackMessage, rootError)
-                emit(UiState.Error(rootError.localizedMessage ?: fallbackMessage))
+                if (error is CancellationException) throw error
+                Log.w(TAG, fallbackMessage, error)
+                emit(UiState.Error(error.localizedMessage ?: fallbackMessage))
             }
             .stateIn(
                 scope = viewModelScope,
@@ -119,19 +112,13 @@ class ChromaPulseViewModel(
                 initialValue = UiState.Loading
             )
 
-    private fun initializeUserAndEngine() {
-        val currentUser = Firebase.auth.currentUser
-        if (currentUser != null && currentUser.uid == currentUserId) {
-            viewModelScope.launch {
-                repository.ensureUserInitialized(currentUser)
-                    .onFailure { err ->
-                        _snackbarMessages.tryEmit(err.localizedMessage ?: "Failed to initialize wallet")
-                    }
-            }
-        }
-
-        // Seed initial completed rounds into Firestore if absent
+    private fun initializeLocalPlayerAndEngine() {
         viewModelScope.launch {
+            repository.ensureLocalPlayerInitialized(currentUserId)
+                .onFailure { err ->
+                    _snackbarMessages.tryEmit(err.localizedMessage ?: "Failed to initialize demo wallet")
+                }
+
             val now = System.currentTimeMillis()
             GameMode.entries.forEach { mode ->
                 val active = ColorPredictionEngine.computeActiveRound(mode, now)
@@ -141,7 +128,6 @@ class ChromaPulseViewModel(
             }
         }
 
-        // Observe pending predictions and settle any whose round has ended
         viewModelScope.launch {
             predictionsState.collect { state ->
                 if (state is UiState.Success) {
@@ -150,7 +136,6 @@ class ChromaPulseViewModel(
             }
         }
 
-        // Real-time 250ms pulse ticker driving all 4 independent timed game modes
         viewModelScope.launch {
             while (isActive) {
                 val now = System.currentTimeMillis()
@@ -321,13 +306,13 @@ class ChromaPulseViewModel(
 
     fun markNotificationRead(notificationId: String) {
         viewModelScope.launch {
-            repository.markNotificationRead(currentUserId, notificationId)
+            repository.markNotificationRead(notificationId)
         }
     }
 
     fun deleteNotification(notificationId: String) {
         viewModelScope.launch {
-            repository.deleteNotification(currentUserId, notificationId)
+            repository.deleteNotification(notificationId)
         }
     }
 

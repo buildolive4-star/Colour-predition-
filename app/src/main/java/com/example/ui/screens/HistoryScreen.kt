@@ -135,12 +135,12 @@ fun HistoryScreen(
     val filteredPredictions = remember(predictions, selectedModeFilter, dateFilter) {
         predictions
             .filter { selectedModeFilter == null || it.modeId == selectedModeFilter?.id }
-            .filter { matchesDateFilter(it.createdAt?.toDate()?.time ?: System.currentTimeMillis(), dateFilter) }
+            .filter { matchesDateFilter(it.createdAtMs, dateFilter) }
     }
 
     val filteredTransactions = remember(walletTransactions, dateFilter) {
         walletTransactions
-            .filter { matchesDateFilter(it.createdAt?.toDate()?.time ?: System.currentTimeMillis(), dateFilter) }
+            .filter { matchesDateFilter(it.createdAtMs, dateFilter) }
     }
 
     val wonCount = remember(filteredPredictions) { filteredPredictions.count { it.status == "WON" } }
@@ -479,7 +479,7 @@ fun WalletTransactionRow(tx: WalletTransaction) {
                         color = TextSecondary
                     )
                     Text(
-                        text = "${formatCoins(tx.previousBalance)} -> ${formatCoins(tx.newBalance)} VC • ${formatTimestamp(tx.createdAt)}",
+                        text = "${formatCoins(tx.previousBalance)} -> ${formatCoins(tx.newBalance)} VC • ${formatTimestamp(tx.createdAtMs)}",
                         fontFamily = JetBrainsMonoFontFamily,
                         fontSize = 10.sp,
                         color = TextSecondary.copy(alpha = 0.8f)
