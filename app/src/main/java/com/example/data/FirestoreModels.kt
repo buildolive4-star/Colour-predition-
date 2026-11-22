@@ -1,15 +1,20 @@
 package com.example.data
 
-import androidx.room.Entity
-import androidx.room.PrimaryKey
+import androidx.annotation.Keep
+import com.google.firebase.Timestamp
+import com.google.firebase.firestore.DocumentId
+import com.google.firebase.firestore.Exclude
+import com.google.firebase.firestore.IgnoreExtraProperties
+import com.google.firebase.firestore.ServerTimestamp
 
-@Entity(tableName = "users")
+@Keep
+@IgnoreExtraProperties
 data class UserProfile(
-    @PrimaryKey val id: String = "local_player",
-    val userId: String = "local_player",
+    @DocumentId val id: String = "",
+    val userId: String = "",
     val displayName: String = "Chroma Player",
-    val email: String = "Local Demo Account",
-    val publicUserId: String = "CP-DEMO01",
+    val email: String = "",
+    val publicUserId: String = "CP-000000",
     val photoUrl: String? = null,
     val virtualCoins: Long = 2500L,
     val totalGames: Long = 0L,
@@ -22,14 +27,21 @@ data class UserProfile(
     val notifyRoundClosing: Boolean = true,
     val notifyBonuses: Boolean = true,
     val accountStatus: String = "ACTIVE",
-    val createdAtMs: Long = System.currentTimeMillis(),
-    val updatedAtMs: Long = System.currentTimeMillis()
-)
+    @ServerTimestamp val createdAt: Timestamp? = null,
+    @ServerTimestamp val updatedAt: Timestamp? = null
+) {
+    @get:Exclude
+    val createdAtMs: Long get() = createdAt?.toDate()?.time ?: 0L
 
-@Entity(tableName = "predictions")
+    @get:Exclude
+    val updatedAtMs: Long get() = updatedAt?.toDate()?.time ?: 0L
+}
+
+@Keep
+@IgnoreExtraProperties
 data class PredictionRecord(
-    @PrimaryKey val id: String = "",
-    val userId: String = "local_player",
+    @DocumentId val id: String = "",
+    val userId: String = "",
     val modeId: String = "mode_30s",
     val periodId: String = "",
     val selectedColor: String = "GREEN",
@@ -38,39 +50,57 @@ data class PredictionRecord(
     val winningColor: String? = null,
     val rewardCoins: Long = 0L,
     val resultHash: String? = null,
-    val createdAtMs: Long = System.currentTimeMillis(),
-    val updatedAtMs: Long = System.currentTimeMillis()
-)
+    @ServerTimestamp val createdAt: Timestamp? = null,
+    @ServerTimestamp val updatedAt: Timestamp? = null
+) {
+    @get:Exclude
+    val createdAtMs: Long get() = createdAt?.toDate()?.time ?: 0L
 
-@Entity(tableName = "wallet_transactions")
+    @get:Exclude
+    val updatedAtMs: Long get() = updatedAt?.toDate()?.time ?: 0L
+}
+
+@Keep
+@IgnoreExtraProperties
 data class WalletTransaction(
-    @PrimaryKey val id: String = "",
-    val userId: String = "local_player",
+    @DocumentId val id: String = "",
+    val userId: String = "",
     val txType: String = "WELCOME_BONUS",
     val amount: Long = 0L,
     val previousBalance: Long = 0L,
     val newBalance: Long = 0L,
     val referenceId: String = "",
     val description: String = "",
-    val createdAtMs: Long = System.currentTimeMillis()
-)
+    @ServerTimestamp val createdAt: Timestamp? = null
+) {
+    @get:Exclude
+    val createdAtMs: Long get() = createdAt?.toDate()?.time ?: 0L
+}
 
-@Entity(tableName = "notifications")
+@Keep
+@IgnoreExtraProperties
 data class UserNotification(
-    @PrimaryKey val id: String = "",
-    val userId: String = "local_player",
+    @DocumentId val id: String = "",
+    val userId: String = "",
     val category: String = "ANNOUNCEMENT",
     val title: String = "",
     val message: String = "",
     val referenceId: String? = null,
     val read: Boolean = false,
-    val createdAtMs: Long = System.currentTimeMillis(),
-    val updatedAtMs: Long = System.currentTimeMillis()
-)
+    @ServerTimestamp val createdAt: Timestamp? = null,
+    @ServerTimestamp val updatedAt: Timestamp? = null
+) {
+    @get:Exclude
+    val createdAtMs: Long get() = createdAt?.toDate()?.time ?: 0L
 
-@Entity(tableName = "game_rounds")
+    @get:Exclude
+    val updatedAtMs: Long get() = updatedAt?.toDate()?.time ?: 0L
+}
+
+@Keep
+@IgnoreExtraProperties
 data class GameRoundRecord(
-    @PrimaryKey val id: String = "",
+    @DocumentId val id: String = "",
     val modeId: String = "mode_30s",
     val periodId: String = "",
     val startTimeMs: Long = 0L,
@@ -79,28 +109,39 @@ data class GameRoundRecord(
     val resultDigit: Long = 0L,
     val resultHash: String = "",
     val status: String = "COMPLETED",
-    val createdAtMs: Long = System.currentTimeMillis()
-)
+    @ServerTimestamp val createdAt: Timestamp? = null
+) {
+    @get:Exclude
+    val createdAtMs: Long get() = createdAt?.toDate()?.time ?: 0L
+}
 
-@Entity(tableName = "leaderboard")
+@Keep
+@IgnoreExtraProperties
 data class LeaderboardEntry(
-    @PrimaryKey val id: String = "local_player",
-    val userId: String = "local_player",
+    @DocumentId val id: String = "",
+    val userId: String = "",
     val displayName: String = "Chroma Player",
-    val publicUserId: String = "CP-DEMO01",
+    val publicUserId: String = "CP-000000",
     val photoUrl: String? = null,
     val totalVirtualPoints: Long = 0L,
     val totalGames: Long = 0L,
     val totalWins: Long = 0L,
     val bestStreak: Long = 0L,
     val badgeTitle: String = "Pulse Rookie",
-    val createdAtMs: Long = System.currentTimeMillis(),
-    val updatedAtMs: Long = System.currentTimeMillis()
-)
+    @ServerTimestamp val createdAt: Timestamp? = null,
+    @ServerTimestamp val updatedAt: Timestamp? = null
+) {
+    @get:Exclude
+    val createdAtMs: Long get() = createdAt?.toDate()?.time ?: 0L
 
-@Entity(tableName = "app_config")
+    @get:Exclude
+    val updatedAtMs: Long get() = updatedAt?.toDate()?.time ?: 0L
+}
+
+@Keep
+@IgnoreExtraProperties
 data class AppConfigEntity(
-    @PrimaryKey val id: String = "global",
+    @DocumentId val id: String = "global",
     val announcementText: String = "Virtual Coins Entertainment Arena — Pick Green, Violet, or Red with SHA-256 verifiable results.",
     val redGreenMultiplier: Double = 2.0,
     val violetMultiplier: Double = 4.5,
@@ -111,23 +152,77 @@ data class AppConfigEntity(
     val forcedNextColor: String? = null,
     val adminQrLabel: String = "ChromaPulse Virtual Counter",
     val adminQrPayload: String = "CHROMAPULSE:VIRTUAL-DEMO:COUNTER-01",
-    val updatedAtMs: Long = System.currentTimeMillis()
-)
+    val updatedByEmail: String? = null,
+    @ServerTimestamp val updatedAt: Timestamp? = null
+) {
+    @get:Exclude
+    val updatedAtMs: Long get() = updatedAt?.toDate()?.time ?: 0L
+}
 
-@Entity(tableName = "virtual_vouchers")
+@Keep
+@IgnoreExtraProperties
 data class VirtualVoucherEntity(
-    @PrimaryKey val code: String,
-    val coinsAmount: Long,
-    val label: String,
+    @DocumentId val id: String = "",
+    val code: String = "",
+    val coinsAmount: Long = 500L,
+    val label: String = "Virtual Gift QR",
+    val publicVisible: Boolean = true,
     val redeemed: Boolean = false,
-    val redeemedAtMs: Long? = null,
-    val createdAtMs: Long = System.currentTimeMillis()
-)
+    val redeemedByUid: String? = null,
+    @ServerTimestamp val redeemedAt: Timestamp? = null,
+    val createdByEmail: String = "",
+    @ServerTimestamp val createdAt: Timestamp? = null,
+    @ServerTimestamp val updatedAt: Timestamp? = null
+) {
+    @get:Exclude
+    val createdAtMs: Long get() = createdAt?.toDate()?.time ?: 0L
 
-@Entity(tableName = "admin_audit_logs")
+    @get:Exclude
+    val redeemedAtMs: Long? get() = redeemedAt?.toDate()?.time
+}
+
+@Keep
+@IgnoreExtraProperties
 data class AdminAuditLogEntity(
-    @PrimaryKey val id: String,
-    val action: String,
-    val details: String,
-    val createdAtMs: Long = System.currentTimeMillis()
-)
+    @DocumentId val id: String = "",
+    val actorUid: String = "",
+    val actorEmail: String = "",
+    val actorRole: String = "SUPER_ADMIN",
+    val action: String = "",
+    val details: String = "",
+    @ServerTimestamp val createdAt: Timestamp? = null
+) {
+    @get:Exclude
+    val createdAtMs: Long get() = createdAt?.toDate()?.time ?: 0L
+}
+
+@Keep
+@IgnoreExtraProperties
+data class CoAdminInviteEntity(
+    @DocumentId val inviteHash: String = "",
+    val label: String = "",
+    val active: Boolean = true,
+    val createdByEmail: String = "",
+    @ServerTimestamp val createdAt: Timestamp? = null,
+    @ServerTimestamp val updatedAt: Timestamp? = null
+) {
+    @get:Exclude
+    val createdAtMs: Long get() = createdAt?.toDate()?.time ?: 0L
+}
+
+@Keep
+@IgnoreExtraProperties
+data class CoAdminGrantEntity(
+    @DocumentId val id: String = "",
+    val userId: String = "",
+    val email: String = "",
+    val displayName: String = "",
+    val label: String = "",
+    val inviteHash: String = "",
+    val active: Boolean = true,
+    @ServerTimestamp val createdAt: Timestamp? = null,
+    @ServerTimestamp val updatedAt: Timestamp? = null
+) {
+    @get:Exclude
+    val createdAtMs: Long get() = createdAt?.toDate()?.time ?: 0L
+}

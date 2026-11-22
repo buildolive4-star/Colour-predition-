@@ -44,6 +44,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -131,6 +133,9 @@ fun HomeScreen(
         }.toSet()
     }
 
+    var secretTapCount by remember { mutableIntStateOf(0) }
+    var lastSecretTapMs by remember { mutableLongStateOf(0L) }
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -138,7 +143,7 @@ fun HomeScreen(
         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        // ShreeWin Style Brand Header with Wallet, QR & Notification Icons
+        // ShreeWin Style Brand Header (Tap "ChromaPulse" 5 times for hidden Admin/Co-Admin login)
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -150,9 +155,21 @@ fun HomeScreen(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     modifier = Modifier
                         .clip(RoundedCornerShape(14.dp))
-                        .clickable(onClick = onOpenProfile)
+                        .clickable {
+                            val now = System.currentTimeMillis()
+                            if (now - lastSecretTapMs > 3000L) {
+                                secretTapCount = 1
+                            } else {
+                                secretTapCount += 1
+                            }
+                            lastSecretTapMs = now
+                            if (secretTapCount >= 5) {
+                                secretTapCount = 0
+                                onOpenAdminPanel()
+                            }
+                        }
                         .padding(end = 4.dp)
-                        .testTag("home_profile_chip")
+                        .testTag("home_brand_secret_trigger")
                 ) {
                     Image(
                         painter = painterResource(id = R.drawable.img_launcher_mark),
@@ -276,21 +293,21 @@ fun HomeScreen(
                         .background(
                             Brush.horizontalGradient(listOf(RoyalIndigoPill, RoyalIndigoPillBright))
                         )
-                        .clickable(onClick = onOpenAdminPanel)
-                        .testTag("home_admin_panel_button")
+                        .clickable(onClick = onOpenLeaderboard)
+                        .testTag("home_leaderboard_button")
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Icon(
-                            imageVector = Icons.Filled.AdminPanelSettings,
+                            imageVector = Icons.Filled.EmojiEvents,
                             contentDescription = null,
                             tint = Color.White,
                             modifier = Modifier.size(18.dp)
                         )
                         Text(
-                            text = "Admin Panel",
+                            text = "Rankings",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.ExtraBold,
                             color = Color.White

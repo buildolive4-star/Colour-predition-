@@ -6,6 +6,8 @@ import androidx.lifecycle.viewModelScope
 import com.example.data.AdminAuditLogEntity
 import com.example.data.AppConfigEntity
 import com.example.data.ChromaPulseRepository
+import com.example.data.CoAdminGrantEntity
+import com.example.data.CoAdminInviteEntity
 import com.example.data.GameRoundRecord
 import com.example.data.LeaderboardEntry
 import com.example.data.PredictionRecord
@@ -19,7 +21,9 @@ import com.example.domain.GameMode
 import com.example.domain.PredictionColor
 import com.example.domain.UiState
 import com.example.domain.VerifiableRoundOutcome
+import com.google.firebase.firestore.FirebaseFirestoreException
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -30,6 +34,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
@@ -46,10 +53,19 @@ data class RoundSettlementBanner(
     val rewardCoins: Long
 )
 
+enum class AdminAccessRole {
+    NONE,
+    CO_ADMIN,
+    SUPER_ADMIN
+}
+
+@OptIn(ExperimentalCoroutinesApi::class)
 class ChromaPulseViewModel(
     private val repository: ChromaPulseRepository,
-    val currentUserId: String = ChromaPulseRepository.DEFAULT_USER_ID
+    val currentUserId: String
 ) : ViewModel() {
+
+    val isSuperAdmin: Boolean = repository.isSuperAdminEmail()
 
     private val _selectedMode = MutableStateFlow(GameMode.MODE_30S)
     val selectedMode: StateFlow<GameMode> = _selectedMode.asStateFlow()
@@ -69,7 +85,13 @@ class ChromaPulseViewModel(
     private val _isClaimingBonus = MutableStateFlow(false)
     val isClaimingBonus: StateFlow<Boolean> = _isClaimingBonus.asStateFlow()
 
-    private val _snackbarMessages = MutableSharedFlow<String>(extraBufferCapacity = 8)
+    private val _isVerifyingAdminPass = MutableStateFlow(false)
+    val isVerifyingAdminPass: StateFlow<Boolean> = _isVerifyingAdminPass.asStateFlow()
+
+    private val _lastCreatedCoAdminPassword = MutableStateFlow<String?>(null)
+    val lastCreatedCoAdminPassword: StateFlow<String?> = _lastCreatedCoAdminPassword.asStateFlow()
+
+    private val _snackbarMessages = MutableSharedFlow<String>(extraBufferCapacity = 10)
     val snackbarMessages: SharedFlow<String> = _snackbarMessages.asSharedFlow()
 
     val profileState: StateFlow<UiState<UserProfile?>> = repository.observeUserProfile(currentUserId)
@@ -96,11 +118,7 @@ class ChromaPulseViewModel(
 
     val appConfigState: StateFlow<AppConfigEntity> =
         repository.observeAppConfig()
-            .map { it ?: AppConfigEntity() }
-            .catch { error ->
-                if (error is CancellationException) throw error
-                emit(AppConfigEntity())
-            }
+            .catchFirestoreError(AppConfigEntity())
             .stateIn(
                 scope = viewModelScope,
                 started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
@@ -108,43 +126,104 @@ class ChromaPulseViewModel(
             )
 
     val vouchersState: StateFlow<List<VirtualVoucherEntity>> =
-        repository.observeVouchers()
-            .catch { error ->
-                if (error is CancellationException) throw error
-                emit(emptyList())
-            }
+        repository.observePublicVouchers()
+            .catchFirestoreError(emptyList())
             .stateIn(
                 scope = viewModelScope,
                 started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
                 initialValue = emptyList()
             )
 
-    val adminLogsState: StateFlow<List<AdminAuditLogEntity>> =
-        repository.observeAdminLogs()
-            .catch { error ->
-                if (error is CancellationException) throw error
-                emit(emptyList())
-            }
+    val ownCoAdminGrantState: StateFlow<CoAdminGrantEntity?> =
+        repository.observeOwnCoAdminGrant()
+            .catchFirestoreError(null)
             .stateIn(
                 scope = viewModelScope,
                 started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
-                initialValue = emptyList()
+                initialValue = null
             )
+
+    val adminRoleState: StateFlow<AdminAccessRole> = ownCoAdminGrantState
+        .map { grant ->
+            when {
+                isSuperAdmin -> AdminAccessRole.SUPER_ADMIN
+                grant?.active == true -> AdminAccessRole.CO_ADMIN
+                else -> AdminAccessRole.NONE
+            }
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+            initialValue = if (isSuperAdmin) AdminAccessRole.SUPER_ADMIN else AdminAccessRole.NONE
+        )
+
+    // Admin-only cloud streams: subscribed ONLY when user holds SUPER_ADMIN or active CO_ADMIN role
+    val adminAllUsersState: StateFlow<List<UserProfile>> = adminRoleState
+        .flatMapLatest { role ->
+            if (role == AdminAccessRole.NONE) flowOf(emptyList())
+            else repository.observeAllUsersForAdmin().catchFirestoreError(emptyList())
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+            initialValue = emptyList()
+        )
+
+    val adminLogsState: StateFlow<List<AdminAuditLogEntity>> = adminRoleState
+        .flatMapLatest { role ->
+            if (role == AdminAccessRole.NONE) flowOf(emptyList())
+            else repository.observeAdminLogs().catchFirestoreError(emptyList())
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+            initialValue = emptyList()
+        )
+
+    val coAdminInvitesState: StateFlow<List<CoAdminInviteEntity>> =
+        if (isSuperAdmin) {
+            repository.observeCoAdminInvites()
+                .catchFirestoreError(emptyList())
+                .stateIn(
+                    scope = viewModelScope,
+                    started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+                    initialValue = emptyList()
+                )
+        } else {
+            MutableStateFlow(emptyList())
+        }
+
+    val allCoAdminGrantsState: StateFlow<List<CoAdminGrantEntity>> =
+        if (isSuperAdmin) {
+            repository.observeAllCoAdminGrants()
+                .catchFirestoreError(emptyList())
+                .stateIn(
+                    scope = viewModelScope,
+                    started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+                    initialValue = emptyList()
+                )
+        } else {
+            MutableStateFlow(emptyList())
+        }
 
     private val settlingIds = mutableSetOf<String>()
     private val publishedRoundIds = mutableSetOf<String>()
     private val lastPeriodByMode = mutableMapOf<GameMode, String>()
 
     init {
-        initializeLocalPlayerAndEngine()
+        initializeCloudPlayerAndEngine()
     }
 
     private fun <T> Flow<T>.toUiStateFlow(fallbackMessage: String): StateFlow<UiState<T>> =
         this.map<T, UiState<T>> { UiState.Success(it) }
             .catch { error ->
-                if (error is CancellationException) throw error
-                Log.w(TAG, fallbackMessage, error)
-                emit(UiState.Error(error.localizedMessage ?: fallbackMessage))
+                val firestoreError = generateSequence(error) { it.cause }
+                    .filterIsInstance<FirebaseFirestoreException>()
+                    .firstOrNull()
+                if (firestoreError == null && error is CancellationException) throw error
+                val root = firestoreError ?: error
+                Log.w(TAG, fallbackMessage, root)
+                emit(UiState.Error(root.localizedMessage ?: fallbackMessage))
             }
             .stateIn(
                 scope = viewModelScope,
@@ -152,11 +231,21 @@ class ChromaPulseViewModel(
                 initialValue = UiState.Loading
             )
 
-    private fun initializeLocalPlayerAndEngine() {
+    private fun <T> Flow<T>.catchFirestoreError(fallback: T): Flow<T> =
+        this.catch { error ->
+            val firestoreError = generateSequence(error) { it.cause }
+                .filterIsInstance<FirebaseFirestoreException>()
+                .firstOrNull()
+            if (firestoreError == null && error is CancellationException) throw error
+            Log.w(TAG, "Stream fallback triggered", firestoreError ?: error)
+            emit(fallback)
+        }
+
+    private fun initializeCloudPlayerAndEngine() {
         viewModelScope.launch {
-            repository.ensureLocalPlayerInitialized(currentUserId)
+            repository.ensureCloudPlayerInitialized()
                 .onFailure { err ->
-                    _snackbarMessages.tryEmit(err.localizedMessage ?: "Failed to initialize demo wallet")
+                    _snackbarMessages.tryEmit(err.localizedMessage ?: "Failed to sync cloud wallet")
                 }
 
             val now = System.currentTimeMillis()
@@ -231,7 +320,7 @@ class ChromaPulseViewModel(
                             endTimeMs = endMs
                         )
                         publishRoundIfNeeded(outcome)
-                        repository.settlePrediction(currentUserId, pred, outcome)
+                        repository.settlePrediction(pred, outcome)
                             .onSuccess { (reward, effectiveOutcome) ->
                                 _latestBanner.value = RoundSettlementBanner(
                                     mode = mode,
@@ -291,15 +380,12 @@ class ChromaPulseViewModel(
         viewModelScope.launch {
             _isSubmittingPrediction.value = true
             repository.submitPrediction(
-                userId = currentUserId,
                 mode = mode,
                 periodId = active.periodId,
                 selectedColor = color,
                 stakeCoins = stakeCoins
             ).onSuccess {
-                _snackbarMessages.tryEmit(
-                    "Locked $stakeCoins VC on ${color.displayName} (${active.periodId})"
-                )
+                _snackbarMessages.tryEmit("Locked $stakeCoins VC on ${color.displayName} (${active.periodId})")
             }.onFailure { err ->
                 _snackbarMessages.tryEmit(err.localizedMessage ?: "Unable to lock prediction.")
             }
@@ -316,17 +402,12 @@ class ChromaPulseViewModel(
     ) {
         viewModelScope.launch {
             repository.playMiniGameRound(
-                userId = currentUserId,
                 gameTitle = gameTitle,
                 stakeCoins = stakeCoins,
                 rewardCoins = rewardCoins,
                 summary = summary
             ).onSuccess {
-                val msg = if (rewardCoins > 0L) {
-                    "$gameTitle: Won +$rewardCoins VC!"
-                } else {
-                    "$gameTitle: $summary"
-                }
+                val msg = if (rewardCoins > 0L) "$gameTitle: Won +$rewardCoins VC!" else "$gameTitle: $summary"
                 _snackbarMessages.tryEmit(msg)
                 onCompleted?.invoke(true)
             }.onFailure { err ->
@@ -338,43 +419,101 @@ class ChromaPulseViewModel(
 
     fun redeemVoucherCode(code: String) {
         viewModelScope.launch {
-            repository.redeemVoucherCode(currentUserId, code)
-                .onSuccess { credited ->
-                    _snackbarMessages.tryEmit("QR Voucher redeemed! +$credited VC added.")
+            repository.redeemVoucherCode(code)
+                .onSuccess { credited -> _snackbarMessages.tryEmit("QR Voucher redeemed! +$credited VC added.") }
+                .onFailure { err -> _snackbarMessages.tryEmit(err.localizedMessage ?: "Invalid voucher code.") }
+        }
+    }
+
+    // ---- Hidden Admin / Co-Admin Auth & Management ----
+
+    fun unlockWithCoAdminPassword(password: String, onResult: (Boolean, String?) -> Unit) {
+        if (_isVerifyingAdminPass.value) return
+        viewModelScope.launch {
+            _isVerifyingAdminPass.value = true
+            repository.unlockCoAdminWithPassword(password)
+                .onSuccess { label ->
+                    _snackbarMessages.tryEmit("Co-Admin access unlocked ($label)")
+                    onResult(true, null)
                 }
                 .onFailure { err ->
-                    _snackbarMessages.tryEmit(err.localizedMessage ?: "Invalid voucher code.")
+                    onResult(false, err.localizedMessage ?: "Invalid Co-Admin password.")
+                }
+            _isVerifyingAdminPass.value = false
+        }
+    }
+
+    fun createCoAdminPassword(label: String, rawPassword: String) {
+        viewModelScope.launch {
+            repository.superAdminCreateCoAdminPassword(label, rawPassword)
+                .onSuccess { createdPassword ->
+                    _lastCreatedCoAdminPassword.value = createdPassword
+                    _snackbarMessages.tryEmit("Co-Admin passkey '$label' created! Share password securely.")
+                }
+                .onFailure { err ->
+                    _snackbarMessages.tryEmit(err.localizedMessage ?: "Unable to create Co-Admin password.")
                 }
         }
     }
 
-    // ---- Admin Panel Actions ----
+    fun clearLastCreatedPassword() {
+        _lastCreatedCoAdminPassword.value = null
+    }
+
+    fun toggleCoAdminInvite(inviteHash: String, active: Boolean, label: String) {
+        viewModelScope.launch {
+            repository.superAdminToggleCoAdminInvite(inviteHash, active, label)
+                .onSuccess {
+                    _snackbarMessages.tryEmit(
+                        if (active) "Passkey '$label' re-enabled." else "Passkey '$label' revoked instantly."
+                    )
+                }
+                .onFailure { err ->
+                    _snackbarMessages.tryEmit(err.localizedMessage ?: "Failed to update passkey.")
+                }
+        }
+    }
+
+    fun deleteCoAdminInvite(inviteHash: String, label: String) {
+        viewModelScope.launch {
+            repository.superAdminDeleteCoAdminInvite(inviteHash, label)
+                .onSuccess { _snackbarMessages.tryEmit("Deleted Co-Admin passkey '$label'.") }
+                .onFailure { err -> _snackbarMessages.tryEmit(err.localizedMessage ?: "Failed to delete passkey.") }
+        }
+    }
+
+    fun revokeCoAdminUser(targetUid: String, email: String) {
+        viewModelScope.launch {
+            repository.superAdminRevokeCoAdminUser(targetUid, email)
+                .onSuccess { _snackbarMessages.tryEmit("Removed Co-Admin $email.") }
+                .onFailure { err -> _snackbarMessages.tryEmit(err.localizedMessage ?: "Failed to remove Co-Admin.") }
+        }
+    }
 
     fun adminSaveConfig(config: AppConfigEntity, auditSummary: String) {
+        val actorRole = if (isSuperAdmin) "SUPER_ADMIN" else "CO_ADMIN"
         viewModelScope.launch {
-            repository.adminUpdateConfig(config, auditSummary)
-                .onSuccess { _snackbarMessages.tryEmit("Admin settings saved: $auditSummary") }
+            repository.adminUpdateConfig(config, auditSummary, actorRole)
+                .onSuccess { _snackbarMessages.tryEmit("Cloud settings saved: $auditSummary") }
                 .onFailure { err -> _snackbarMessages.tryEmit(err.localizedMessage ?: "Failed to save config.") }
         }
     }
 
-    fun adminAdjustCoins(deltaCoins: Long, reason: String) {
+    fun adminAdjustCoins(targetUserId: String, deltaCoins: Long, reason: String) {
+        val actorRole = if (isSuperAdmin) "SUPER_ADMIN" else "CO_ADMIN"
         viewModelScope.launch {
-            repository.adminAdjustUserCoins(currentUserId, deltaCoins, reason)
-                .onSuccess { nextBalance ->
-                    _snackbarMessages.tryEmit("Wallet updated to $nextBalance VC.")
-                }
-                .onFailure { err ->
-                    _snackbarMessages.tryEmit(err.localizedMessage ?: "Coin adjustment failed.")
-                }
+            repository.adminAdjustUserCoins(targetUserId, deltaCoins, reason, actorRole)
+                .onSuccess { nextBalance -> _snackbarMessages.tryEmit("Player wallet updated to $nextBalance VC.") }
+                .onFailure { err -> _snackbarMessages.tryEmit(err.localizedMessage ?: "Coin adjustment failed.") }
         }
     }
 
     fun adminCreateVoucher(coinsAmount: Long, label: String) {
+        val actorRole = if (isSuperAdmin) "SUPER_ADMIN" else "CO_ADMIN"
         viewModelScope.launch {
-            repository.adminCreateVoucher(coinsAmount, label)
+            repository.adminCreateVoucher(coinsAmount, label, actorRole)
                 .onSuccess { voucher ->
-                    _snackbarMessages.tryEmit("Created QR Voucher ${voucher.code} (+${voucher.coinsAmount} VC)")
+                    _snackbarMessages.tryEmit("Created Cloud QR Voucher ${voucher.code} (+${voucher.coinsAmount} VC)")
                 }
                 .onFailure { err ->
                     _snackbarMessages.tryEmit(err.localizedMessage ?: "Failed to create QR voucher.")
@@ -387,13 +526,9 @@ class ChromaPulseViewModel(
         val todayUtc = ColorPredictionEngine.formatUtcIsoDate(System.currentTimeMillis())
         viewModelScope.launch {
             _isClaimingBonus.value = true
-            repository.claimDailyBonus(currentUserId, todayUtc)
-                .onSuccess { bonus ->
-                    _snackbarMessages.tryEmit("+$bonus virtual coins added to your demo wallet!")
-                }
-                .onFailure { err ->
-                    _snackbarMessages.tryEmit(err.localizedMessage ?: "Daily bonus unavailable.")
-                }
+            repository.claimDailyBonus(todayUtc)
+                .onSuccess { bonus -> _snackbarMessages.tryEmit("+$bonus virtual coins added to your cloud wallet!") }
+                .onFailure { err -> _snackbarMessages.tryEmit(err.localizedMessage ?: "Daily bonus unavailable.") }
             _isClaimingBonus.value = false
         }
     }
@@ -405,17 +540,9 @@ class ChromaPulseViewModel(
         notifyBonuses: Boolean
     ) {
         viewModelScope.launch {
-            repository.updateProfileSettings(
-                userId = currentUserId,
-                displayName = displayName,
-                notifyResults = notifyResults,
-                notifyRoundClosing = notifyRoundClosing,
-                notifyBonuses = notifyBonuses
-            ).onSuccess {
-                _snackbarMessages.tryEmit("Profile & preferences saved.")
-            }.onFailure { err ->
-                _snackbarMessages.tryEmit(err.localizedMessage ?: "Failed to save settings.")
-            }
+            repository.updateProfileSettings(displayName, notifyResults, notifyRoundClosing, notifyBonuses)
+                .onSuccess { _snackbarMessages.tryEmit("Profile & preferences synced to cloud.") }
+                .onFailure { err -> _snackbarMessages.tryEmit(err.localizedMessage ?: "Failed to save settings.") }
         }
     }
 
@@ -423,33 +550,23 @@ class ChromaPulseViewModel(
         if (_isClaimingBonus.value) return
         viewModelScope.launch {
             _isClaimingBonus.value = true
-            repository.claimDemoRefill(currentUserId)
-                .onSuccess { refill ->
-                    _snackbarMessages.tryEmit("+$refill virtual demo coins refilled!")
-                }
-                .onFailure { err ->
-                    _snackbarMessages.tryEmit(err.localizedMessage ?: "Demo refill unavailable.")
-                }
+            repository.claimDemoRefill()
+                .onSuccess { refill -> _snackbarMessages.tryEmit("+$refill virtual demo coins refilled!") }
+                .onFailure { err -> _snackbarMessages.tryEmit(err.localizedMessage ?: "Demo refill unavailable.") }
             _isClaimingBonus.value = false
         }
     }
 
     fun markNotificationRead(notificationId: String) {
-        viewModelScope.launch {
-            repository.markNotificationRead(notificationId)
-        }
+        viewModelScope.launch { repository.markNotificationRead(notificationId) }
     }
 
     fun markAllNotificationsRead() {
-        viewModelScope.launch {
-            repository.markAllNotificationsRead(currentUserId)
-        }
+        viewModelScope.launch { repository.markAllNotificationsRead() }
     }
 
     fun deleteNotification(notificationId: String) {
-        viewModelScope.launch {
-            repository.deleteNotification(notificationId)
-        }
+        viewModelScope.launch { repository.deleteNotification(notificationId) }
     }
 
     private companion object {

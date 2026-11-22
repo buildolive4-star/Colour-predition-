@@ -39,18 +39,22 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.credentials.CredentialManager
 import androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory.Companion.APPLICATION_KEY
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -61,10 +65,12 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.example.auth.GoogleAuthHelper
 import com.example.data.ChromaPulseRepository
 import com.example.domain.UiState
 import com.example.ui.components.QrCenterScreen
 import com.example.ui.screens.AdminPanelScreen
+import com.example.ui.screens.AuthScreen
 import com.example.ui.screens.GameArenaScreen
 import com.example.ui.screens.HistoryScreen
 import com.example.ui.screens.HomeScreen
@@ -80,6 +86,9 @@ import com.example.ui.theme.ObsidianCanvas
 import com.example.ui.theme.ObsidianSurface
 import com.example.ui.theme.TextSecondary
 import com.example.ui.viewmodel.ChromaPulseViewModel
+import com.google.firebase.Firebase
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.auth
 
 const val ROUTE_HOME = "home"
 const val ROUTE_ARENA = "arena"
@@ -114,22 +123,53 @@ class MainActivity : ComponentActivity() {
         )
         setContent {
             ChromaPulseTheme {
-                ChromaPulseApp()
+                ChromaPulseRoot()
             }
         }
     }
 }
 
 @Composable
-fun ChromaPulseApp() {
+fun ChromaPulseRoot() {
+    var currentUser by remember { mutableStateOf(Firebase.auth.currentUser) }
+
+    DisposableEffect(Unit) {
+        val listener = FirebaseAuth.AuthStateListener { auth ->
+            currentUser = auth.currentUser
+        }
+        Firebase.auth.addAuthStateListener(listener)
+        onDispose { Firebase.auth.removeAuthStateListener(listener) }
+    }
+
+    val signedInUser = currentUser
+    if (signedInUser == null || signedInUser.uid.isBlank()) {
+        AuthScreen(
+            onAuthSuccess = { currentUser = Firebase.auth.currentUser }
+        )
+    } else {
+        val uid = signedInUser.uid
+        key(uid) {
+            AuthenticatedChromaPulseApp(currentUserId = uid)
+        }
+    }
+}
+
+@Composable
+private fun AuthenticatedChromaPulseApp(currentUserId: String) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val credentialManager = remember(context) { CredentialManager.create(context) }
+
     val viewModel: ChromaPulseViewModel = viewModel(
+        key = currentUserId,
         factory = viewModelFactory {
             initializer {
                 val app = checkNotNull(this[APPLICATION_KEY]) {
                     "APPLICATION_KEY missing from CreationExtras"
                 }
                 ChromaPulseViewModel(
-                    repository = ChromaPulseRepository(app)
+                    repository = ChromaPulseRepository(app),
+                    currentUserId = currentUserId
                 )
             }
         }
@@ -143,7 +183,13 @@ fun ChromaPulseApp() {
     val leaderboardState by viewModel.leaderboardState.collectAsStateWithLifecycle()
     val appConfig by viewModel.appConfigState.collectAsStateWithLifecycle()
     val vouchers by viewModel.vouchersState.collectAsStateWithLifecycle()
+    val adminRole by viewModel.adminRoleState.collectAsStateWithLifecycle()
+    val adminAllUsers by viewModel.adminAllUsersState.collectAsStateWithLifecycle()
     val adminLogs by viewModel.adminLogsState.collectAsStateWithLifecycle()
+    val coAdminInvites by viewModel.coAdminInvitesState.collectAsStateWithLifecycle()
+    val coAdminGrants by viewModel.allCoAdminGrantsState.collectAsStateWithLifecycle()
+    val lastCreatedPassword by viewModel.lastCreatedCoAdminPassword.collectAsStateWithLifecycle()
+    val isVerifyingAdminPass by viewModel.isVerifyingAdminPass.collectAsStateWithLifecycle()
 
     val selectedMode by viewModel.selectedMode.collectAsStateWithLifecycle()
     val activeRounds by viewModel.activeRounds.collectAsStateWithLifecycle()
@@ -185,7 +231,8 @@ fun ChromaPulseApp() {
         }
     }
 
-    val isFullScreenSubRoute = currentRoute == ROUTE_ADMIN || currentRoute == ROUTE_QR_CENTER || currentRoute == ROUTE_LEADERBOARD
+    val isFullScreenSubRoute =
+        currentRoute == ROUTE_ADMIN || currentRoute == ROUTE_QR_CENTER || currentRoute == ROUTE_LEADERBOARD
 
     BoxWithConstraints(
         modifier = Modifier
@@ -367,6 +414,9 @@ fun ChromaPulseApp() {
                                 onOpenLeaderboard = { navController.navigate(ROUTE_LEADERBOARD) },
                                 onUpdateSettings = { name, res, close, bonus ->
                                     viewModel.updateProfileSettings(name, res, close, bonus)
+                                },
+                                onSignOut = {
+                                    GoogleAuthHelper.signOut(credentialManager, scope)
                                 }
                             )
                         }
@@ -383,16 +433,38 @@ fun ChromaPulseApp() {
 
                         composable(ROUTE_ADMIN) {
                             AdminPanelScreen(
-                                profile = profile,
+                                currentUserProfile = profile,
+                                adminRole = adminRole,
+                                isVerifyingPassword = isVerifyingAdminPass,
                                 appConfig = appConfig,
+                                allUsers = adminAllUsers,
                                 vouchers = vouchers,
                                 adminLogs = adminLogs,
+                                coAdminInvites = coAdminInvites,
+                                coAdminGrants = coAdminGrants,
+                                lastCreatedPassword = lastCreatedPassword,
                                 totalPredictionsCount = predictions.size,
+                                onUnlockWithPassword = { pass, callback ->
+                                    viewModel.unlockWithCoAdminPassword(pass, callback)
+                                },
+                                onCreateCoAdminPassword = { label, pass ->
+                                    viewModel.createCoAdminPassword(label, pass)
+                                },
+                                onClearLastCreatedPassword = { viewModel.clearLastCreatedPassword() },
+                                onToggleCoAdminInvite = { hash, active, label ->
+                                    viewModel.toggleCoAdminInvite(hash, active, label)
+                                },
+                                onDeleteCoAdminInvite = { hash, label ->
+                                    viewModel.deleteCoAdminInvite(hash, label)
+                                },
+                                onRevokeCoAdminUser = { targetUid, email ->
+                                    viewModel.revokeCoAdminUser(targetUid, email)
+                                },
                                 onSaveConfig = { updated, summary ->
                                     viewModel.adminSaveConfig(updated, summary)
                                 },
-                                onAdjustUserCoins = { delta, reason ->
-                                    viewModel.adminAdjustCoins(delta, reason)
+                                onAdjustUserCoins = { targetUid, delta, reason ->
+                                    viewModel.adminAdjustCoins(targetUid, delta, reason)
                                 },
                                 onCreateVoucher = { amount, label ->
                                     viewModel.adminCreateVoucher(amount, label)

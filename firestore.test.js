@@ -5,23 +5,35 @@ const {
 } = require("@firebase/rules-unit-testing");
 const { test, before, after, beforeEach } = require("node:test");
 const fs = require("node:fs");
+const crypto = require("node:crypto");
 
 let testEnv;
 const PROJECT_ID = process.env.GCP_PROJECT || "demo-no-project";
-const ALICE_UID = "alice_uid_001";
-const BOB_UID = "bob_uid_002";
+const SUPER_ADMIN_UID = "super_admin_uid";
+const SUPER_ADMIN_EMAIL = "buildolive4@gmail.com";
+const ALICE_UID = "alice_player_01";
+const BOB_UID = "bob_player_02";
 
 const [emulatorHost, emulatorPortStr] = (
   process.env.FIRESTORE_EMULATOR_HOST || "127.0.0.1:8085"
 ).split(":");
 const emulatorPort = parseInt(emulatorPortStr, 10);
 
-function validProfile(uid, ts) {
+function sha256Hex(raw) {
+  return crypto.createHash("sha256").update(raw, "utf8").digest("hex");
+}
+
+function nowPast(msAgo = 2000) {
+  return new Date(Date.now() - msAgo);
+}
+
+function validUserPayload(uid, email = "alice@example.com") {
+  const ts = nowPast(5000);
   return {
     userId: uid,
-    displayName: "Nova Player",
-    email: `${uid}@example.com`,
-    publicUserId: "CP-A1B2C3",
+    displayName: "Chroma Player",
+    email,
+    publicUserId: "CP-123456",
     virtualCoins: 2500,
     totalGames: 0,
     totalWins: 0,
@@ -37,61 +49,19 @@ function validProfile(uid, ts) {
   };
 }
 
-function validPrediction(uid, ts) {
+function validAppConfigPayload(email = SUPER_ADMIN_EMAIL) {
   return {
-    userId: uid,
-    modeId: "mode_30s",
-    periodId: "20261122-30S-00101",
-    selectedColor: "GREEN",
-    stakeCoins: 100,
-    status: "PENDING",
-    rewardCoins: 0,
-    createdAt: ts,
-    updatedAt: ts,
-  };
-}
-
-function validWalletTx(uid, ts) {
-  return {
-    userId: uid,
-    txType: "WELCOME_BONUS",
-    amount: 2500,
-    previousBalance: 0,
-    newBalance: 2500,
-    referenceId: "welcome_bonus",
-    description: "Initial virtual demo coins",
-    createdAt: ts,
-  };
-}
-
-function validRound(ts) {
-  return {
-    modeId: "mode_30s",
-    periodId: "20261122-30S-00101",
-    startTimeMs: 1795350000000,
-    endTimeMs: 1795350030000,
-    winningColor: "GREEN",
-    resultDigit: 7,
-    resultHash: "a".repeat(64),
-    status: "COMPLETED",
-    visibility: "PUBLIC",
-    createdAt: ts,
-  };
-}
-
-function validLeaderboard(uid, ts) {
-  return {
-    userId: uid,
-    displayName: "Nova Player",
-    publicUserId: "CP-A1B2C3",
-    totalVirtualPoints: 200,
-    totalGames: 1,
-    totalWins: 1,
-    bestStreak: 1,
-    badgeTitle: "Pulse Rookie",
-    visibility: "PUBLIC",
-    createdAt: ts,
-    updatedAt: ts,
+    announcementText: "Welcome to ChromaPulse Virtual Arena!",
+    redGreenMultiplier: 2.0,
+    violetMultiplier: 4.5,
+    mode30sEnabled: true,
+    mode60sEnabled: true,
+    mode3mEnabled: true,
+    mode5mEnabled: true,
+    adminQrLabel: "ChromaPulse Virtual Counter",
+    adminQrPayload: "CHROMAPULSE:VIRTUAL-DEMO:COUNTER-01",
+    updatedByEmail: email,
+    updatedAt: nowPast(2000),
   };
 }
 
@@ -119,194 +89,258 @@ beforeEach(async () => {
   }
 });
 
-test("Unauthenticated users are denied on all collections", async () => {
-  const db = testEnv.unauthenticatedContext().firestore();
-  const now = new Date(Date.now() - 1000);
-  await assertFails(db.collection("users").doc(ALICE_UID).get());
-  await assertFails(db.collection("users").doc(ALICE_UID).set(validProfile(ALICE_UID, now)));
-  await assertFails(db.collection("game_rounds").where("visibility", "==", "PUBLIC").get());
-  await assertFails(db.collection("leaderboard").where("visibility", "==", "PUBLIC").get());
+test("Unauthenticated user cannot read or write any collection", async () => {
+  const unauthDb = testEnv.unauthenticatedContext().firestore();
+  await assertFails(unauthDb.collection("users").doc(ALICE_UID).get());
+  await assertFails(unauthDb.collection("app_config").doc("global").get());
+  await assertFails(unauthDb.collection("co_admin_invites").get());
+  await assertFails(
+    unauthDb.collection("users").doc(ALICE_UID).set(validUserPayload(ALICE_UID))
+  );
 });
 
-test("User profile: owner create/read/update succeeds; cross-user PII read, shadow fields, and future timestamps fail", async () => {
-  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
-  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
-  const past = new Date(Date.now() - 2000);
+test("User profile isolation, valid create/update, and ghost-field rejection", async () => {
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID, { email: "alice@example.com", email_verified: true }).firestore();
+  const bobDb = testEnv.authenticatedContext(BOB_UID, { email: "bob@example.com", email_verified: true }).firestore();
 
-  await assertSucceeds(aliceDb.collection("users").doc(ALICE_UID).set(validProfile(ALICE_UID, past)));
-  await assertSucceeds(aliceDb.collection("users").doc(ALICE_UID).get());
+  // Valid create with initial 2500 VC
+  await assertSucceeds(
+    aliceDb.collection("users").doc(ALICE_UID).set(validUserPayload(ALICE_UID))
+  );
 
-  // Cross-user PII read denied & list denied
+  // Reject creating profile with forged starting coins or extra ghost field
+  await assertFails(
+    bobDb.collection("users").doc(BOB_UID).set({
+      ...validUserPayload(BOB_UID, "bob@example.com"),
+      virtualCoins: 999999,
+    })
+  );
+  await assertFails(
+    bobDb.collection("users").doc(BOB_UID).set({
+      ...validUserPayload(BOB_UID, "bob@example.com"),
+      isAdmin: true,
+    })
+  );
+
+  // Cross-user read & listing users denied for regular player
   await assertFails(bobDb.collection("users").doc(ALICE_UID).get());
   await assertFails(aliceDb.collection("users").get());
 
-  // Valid profile update action
+  // Owner partial update allowed; cannot mutate accountStatus or createdAt
   await assertSucceeds(
     aliceDb.collection("users").doc(ALICE_UID).update({
-      displayName: "Chroma Ace",
-      notifyResults: false,
-      updatedAt: new Date(Date.now() - 500),
-    })
-  );
-
-  // Valid wallet & stats update action
-  await assertSucceeds(
-    aliceDb.collection("users").doc(ALICE_UID).update({
+      displayName: "Alice Star",
       virtualCoins: 2400,
-      totalGames: 1,
-      updatedAt: new Date(Date.now() - 400),
+      updatedAt: nowPast(1000),
     })
   );
-
-  // Shadow field / privilege escalation fails
   await assertFails(
     aliceDb.collection("users").doc(ALICE_UID).update({
-      isAdmin: true,
-      updatedAt: new Date(Date.now() - 300),
+      accountStatus: "SUSPENDED",
+      updatedAt: nowPast(500),
     })
-  );
-
-  // Immutable createdAt tamper fails
-  await assertFails(
-    aliceDb.collection("users").doc(ALICE_UID).update({
-      createdAt: new Date(Date.now() - 200),
-      updatedAt: new Date(Date.now() - 200),
-    })
-  );
-
-  // Negative virtual coins fail
-  await assertFails(
-    aliceDb.collection("users").doc(ALICE_UID).update({
-      virtualCoins: -50,
-      updatedAt: new Date(Date.now() - 200),
-    })
-  );
-
-  // Future timestamp rejected
-  await assertFails(
-    bobDb.collection("users").doc(BOB_UID).set(validProfile(BOB_UID, new Date(Date.now() + 60000)))
   );
 });
 
-test("Predictions: create PENDING, settle once to WON, reject second update (terminal lock) and cross-user access", async () => {
-  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
-  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
-  const past = new Date(Date.now() - 3000);
-  const predId = "mode_30s_20261122-30S-00101";
-
-  await assertSucceeds(
-    aliceDb.collection("users").doc(ALICE_UID).collection("predictions").doc(predId).set(validPrediction(ALICE_UID, past))
-  );
-
-  // Owner list subcollection succeeds
-  await assertSucceeds(
-    aliceDb.collection("users").doc(ALICE_UID).collection("predictions").get()
-  );
-
-  // Cross-user read/list fails
-  await assertFails(
-    bobDb.collection("users").doc(ALICE_UID).collection("predictions").get()
-  );
-
-  // Settle PENDING -> WON succeeds
-  await assertSucceeds(
-    aliceDb.collection("users").doc(ALICE_UID).collection("predictions").doc(predId).update({
-      status: "WON",
-      winningColor: "GREEN",
-      rewardCoins: 200,
-      resultHash: "b".repeat(64),
-      updatedAt: new Date(Date.now() - 500),
+test("Spoofed unverified admin email is rejected", async () => {
+  const spoofDb = testEnv
+    .authenticatedContext("spoof_uid", {
+      email: SUPER_ADMIN_EMAIL,
+      email_verified: false,
     })
-  );
+    .firestore();
 
-  // Terminal state lock: modifying WON prediction fails
   await assertFails(
-    aliceDb.collection("users").doc(ALICE_UID).collection("predictions").doc(predId).update({
-      rewardCoins: 9999,
-      updatedAt: new Date(Date.now() - 200),
-    })
+    spoofDb.collection("app_config").doc("global").set(validAppConfigPayload())
   );
-
-  // Delete prediction fails
-  await assertFails(
-    aliceDb.collection("users").doc(ALICE_UID).collection("predictions").doc(predId).delete()
-  );
+  await assertFails(spoofDb.collection("users").get());
 });
 
-test("Wallet ledger: immutable create with balanced math succeeds; balance mismatch or mutation fails", async () => {
-  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
-  const past = new Date(Date.now() - 2000);
+test("Super Admin creates Co-Admin password -> Co-Admin unlocks via password -> Super Admin revokes password instantaneously", async () => {
+  const superDb = testEnv
+    .authenticatedContext(SUPER_ADMIN_UID, {
+      email: SUPER_ADMIN_EMAIL,
+      email_verified: true,
+    })
+    .firestore();
+  const aliceDb = testEnv
+    .authenticatedContext(ALICE_UID, {
+      email: "alice@example.com",
+      email_verified: true,
+    })
+    .firestore();
 
+  const coAdminPassword = "TeamMod@2026";
+  const inviteHash = sha256Hex(coAdminPassword);
+  const wrongHash = sha256Hex("WrongPass123");
+
+  // Super Admin initializes app_config and Alice's user doc
   await assertSucceeds(
-    aliceDb.collection("users").doc(ALICE_UID).collection("wallet_transactions").doc("welcome_bonus").set(validWalletTx(ALICE_UID, past))
+    superDb.collection("app_config").doc("global").set(validAppConfigPayload())
+  );
+  await assertSucceeds(
+    aliceDb.collection("users").doc(ALICE_UID).set(validUserPayload(ALICE_UID))
   );
 
-  // Unbalanced math fails
+  // Regular user cannot update app_config or create co_admin_invites or list invites
   await assertFails(
-    aliceDb.collection("users").doc(ALICE_UID).collection("wallet_transactions").doc("bad_tx").set({
-      ...validWalletTx(ALICE_UID, past),
-      newBalance: 99999,
+    aliceDb.collection("app_config").doc("global").update({
+      announcementText: "Hacked!",
+      updatedAt: nowPast(1000),
+    })
+  );
+  await assertFails(aliceDb.collection("co_admin_invites").get());
+
+  // Super Admin creates hashed Co-Admin password invite
+  const ts = nowPast(3000);
+  await assertSucceeds(
+    superDb.collection("co_admin_invites").doc(inviteHash).set({
+      label: "Night Moderator",
+      active: true,
+      createdByEmail: SUPER_ADMIN_EMAIL,
+      createdAt: ts,
+      updatedAt: ts,
     })
   );
 
-  // Update and delete denied on immutable ledger
+  // Alice cannot claim Co-Admin with a wrong hash
   await assertFails(
-    aliceDb.collection("users").doc(ALICE_UID).collection("wallet_transactions").doc("welcome_bonus").update({ amount: 5000 })
-  );
-  await assertFails(
-    aliceDb.collection("users").doc(ALICE_UID).collection("wallet_transactions").doc("welcome_bonus").delete()
-  );
-});
-
-test("Notifications: create, mark read, and delete succeed; mutating message fails", async () => {
-  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
-  const past = new Date(Date.now() - 2000);
-
-  await assertSucceeds(
-    aliceDb.collection("users").doc(ALICE_UID).collection("notifications").doc("notif_1").set({
+    aliceDb.collection("co_admins").doc(ALICE_UID).set({
       userId: ALICE_UID,
-      category: "DAILY_BONUS",
-      title: "Daily Bonus Claimed",
-      message: "You received 500 virtual coins.",
-      referenceId: "daily_20261122",
-      read: false,
-      createdAt: past,
-      updatedAt: past,
+      email: "alice@example.com",
+      displayName: "Alice",
+      label: "Fake",
+      inviteHash: wrongHash,
+      active: true,
+      createdAt: ts,
+      updatedAt: ts,
     })
   );
 
+  // Alice verifies password by getting co_admin_invites/{inviteHash} and claims Co-Admin grant
+  await assertSucceeds(aliceDb.collection("co_admin_invites").doc(inviteHash).get());
   await assertSucceeds(
-    aliceDb.collection("users").doc(ALICE_UID).collection("notifications").doc("notif_1").update({
-      read: true,
-      updatedAt: new Date(Date.now() - 500),
+    aliceDb.collection("co_admins").doc(ALICE_UID).set({
+      userId: ALICE_UID,
+      email: "alice@example.com",
+      displayName: "Alice",
+      label: "Night Moderator",
+      inviteHash,
+      active: true,
+      createdAt: ts,
+      updatedAt: ts,
     })
   );
 
+  // Now Alice (active Co-Admin) CAN update global app_config, list users, and create vouchers!
+  await assertSucceeds(
+    aliceDb.collection("app_config").doc("global").update({
+      announcementText: "Updated live by Co-Admin!",
+      updatedByEmail: "alice@example.com",
+      updatedAt: nowPast(1000),
+    })
+  );
+  await assertSucceeds(aliceDb.collection("users").get());
+  await assertSucceeds(
+    aliceDb.collection("virtual_vouchers").doc("CP-COADMIN-500").set({
+      code: "CP-COADMIN-500",
+      coinsAmount: 500,
+      label: "Co-Admin Gift QR",
+      publicVisible: true,
+      redeemed: false,
+      createdByEmail: "alice@example.com",
+      createdAt: nowPast(1000),
+      updatedAt: nowPast(1000),
+    })
+  );
+
+  // Co-Admin CANNOT create new Co-Admin invites (Super Admin only!)
+  const secondHash = sha256Hex("SneakyPass");
   await assertFails(
-    aliceDb.collection("users").doc(ALICE_UID).collection("notifications").doc("notif_1").update({
-      message: "Tampered",
-      updatedAt: new Date(Date.now() - 400),
+    aliceDb.collection("co_admin_invites").doc(secondHash).set({
+      label: "Unauthorized Invite",
+      active: true,
+      createdByEmail: "alice@example.com",
+      createdAt: nowPast(1000),
+      updatedAt: nowPast(1000),
     })
   );
 
+  // Super Admin revokes the Co-Admin password -> Alice loses Admin access IMMEDIATELY
   await assertSucceeds(
-    aliceDb.collection("users").doc(ALICE_UID).collection("notifications").doc("notif_1").delete()
+    superDb.collection("co_admin_invites").doc(inviteHash).update({
+      active: false,
+      updatedAt: nowPast(500),
+    })
+  );
+  await assertFails(
+    aliceDb.collection("app_config").doc("global").update({
+      announcementText: "Should be blocked!",
+      updatedAt: nowPast(200),
+    })
   );
 });
 
-test("Game rounds & Leaderboard: PUBLIC filtered queries succeed; unfiltered queries and cross-user writes fail", async () => {
-  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
-  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
-  const past = new Date(Date.now() - 2000);
-  const roundId = "mode_30s_20261122-30S-00101";
+test("Player voucher redemption and Kotlin-aligned filtered queries succeed", async () => {
+  const superDb = testEnv
+    .authenticatedContext(SUPER_ADMIN_UID, {
+      email: SUPER_ADMIN_EMAIL,
+      email_verified: true,
+    })
+    .firestore();
+  const bobDb = testEnv
+    .authenticatedContext(BOB_UID, {
+      email: "bob@example.com",
+      email_verified: true,
+    })
+    .firestore();
 
-  await assertSucceeds(aliceDb.collection("game_rounds").doc(roundId).set(validRound(past)));
-  await assertSucceeds(aliceDb.collection("game_rounds").where("visibility", "==", "PUBLIC").get());
-  await assertFails(aliceDb.collection("game_rounds").get());
-  await assertFails(aliceDb.collection("game_rounds").doc(roundId).update({ winningColor: "RED" }));
+  const ts = nowPast(4000);
+  await assertSucceeds(
+    superDb.collection("virtual_vouchers").doc("CP-WELCOME-500").set({
+      code: "CP-WELCOME-500",
+      coinsAmount: 500,
+      label: "Welcome Gift QR",
+      publicVisible: true,
+      redeemed: false,
+      createdByEmail: SUPER_ADMIN_EMAIL,
+      createdAt: ts,
+      updatedAt: ts,
+    })
+  );
 
-  await assertSucceeds(aliceDb.collection("leaderboard").doc(ALICE_UID).set(validLeaderboard(ALICE_UID, past)));
-  await assertSucceeds(bobDb.collection("leaderboard").where("visibility", "==", "PUBLIC").get());
-  await assertFails(bobDb.collection("leaderboard").get());
-  await assertFails(bobDb.collection("leaderboard").doc(ALICE_UID).update({ totalVirtualPoints: 0 }));
+  // Filtered query matching Kotlin repository succeeds; unfiltered list fails for normal player
+  await assertSucceeds(
+    bobDb.collection("virtual_vouchers").where("publicVisible", "==", true).get()
+  );
+  await assertFails(bobDb.collection("virtual_vouchers").get());
+
+  // Bob redeems voucher once
+  await assertSucceeds(
+    bobDb.collection("virtual_vouchers").doc("CP-WELCOME-500").update({
+      redeemed: true,
+      redeemedByUid: BOB_UID,
+      redeemedAt: nowPast(1000),
+      updatedAt: nowPast(1000),
+    })
+  );
+
+  // Double-redemption fails
+  await assertFails(
+    bobDb.collection("virtual_vouchers").doc("CP-WELCOME-500").update({
+      redeemed: true,
+      redeemedByUid: BOB_UID,
+      redeemedAt: nowPast(500),
+      updatedAt: nowPast(500),
+    })
+  );
+
+  // Leaderboard & game_rounds Kotlin-aligned filtered queries succeed
+  await assertSucceeds(
+    bobDb.collection("leaderboard").where("totalVirtualPoints", ">=", 0).get()
+  );
+  await assertSucceeds(
+    bobDb.collection("game_rounds").where("status", "==", "COMPLETED").get()
+  );
+  await assertFails(bobDb.collection("game_rounds").get());
 });

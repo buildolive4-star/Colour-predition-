@@ -15,9 +15,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.AccountBalanceWallet
-import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.QrCode2
@@ -37,6 +38,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -82,9 +85,12 @@ fun ProfileScreen(
     onOpenQrCenter: () -> Unit,
     onOpenAdminPanel: () -> Unit,
     onOpenLeaderboard: () -> Unit,
-    onUpdateSettings: (String, Boolean, Boolean, Boolean) -> Unit
+    onUpdateSettings: (String, Boolean, Boolean, Boolean) -> Unit,
+    onSignOut: () -> Unit
 ) {
     var showEditNameDialog by remember { mutableStateOf(false) }
+    var secretBrandTaps by remember { mutableIntStateOf(0) }
+    var lastTapMs by remember { mutableLongStateOf(0L) }
 
     val displayName = profile?.displayName ?: "Chroma Player"
     val totalGames = profile?.totalGames ?: 0L
@@ -393,23 +399,24 @@ fun ProfileScreen(
                 }
 
                 Button(
-                    onClick = onOpenAdminPanel,
+                    onClick = onSignOut,
                     shape = RoundedCornerShape(16.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = RoyalIndigoPill,
-                        contentColor = Color.White
+                        containerColor = ObsidianCardElevated,
+                        contentColor = Color(0xFFFF6B6B)
                     ),
+                    border = BorderStroke(1.dp, Color(0xFFFF6B6B).copy(alpha = 0.45f)),
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(50.dp)
-                        .testTag("profile_open_admin_button")
+                        .testTag("profile_sign_out_button")
                 ) {
-                    Icon(Icons.Filled.AdminPanelSettings, contentDescription = null, modifier = Modifier.size(20.dp))
+                    Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Open Admin Panel (PIN: 1234)",
+                        text = "Sign Out of Google Account",
                         style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.ExtraBold
+                        fontWeight = FontWeight.Bold
                     )
                 }
             }
@@ -509,9 +516,18 @@ fun ProfileScreen(
                         color = TextSecondary
                     )
                     Text(
-                        text = "Instant Play • No Login Required. Your virtual wallet, predictions, and ledger are saved safely on this device with zero real-world monetary value.",
+                        text = "ChromaPulse Cloud • Synced with Firebase Firestore. Virtual coins carry zero real-world monetary value.",
                         style = MaterialTheme.typography.bodySmall,
-                        color = TextSecondary
+                        color = TextSecondary,
+                        modifier = Modifier.clickable {
+                            val now = System.currentTimeMillis()
+                            secretBrandTaps = if (now - lastTapMs > 3000L) 1 else secretBrandTaps + 1
+                            lastTapMs = now
+                            if (secretBrandTaps >= 5) {
+                                secretBrandTaps = 0
+                                onOpenAdminPanel()
+                            }
+                        }
                     )
                 }
             }

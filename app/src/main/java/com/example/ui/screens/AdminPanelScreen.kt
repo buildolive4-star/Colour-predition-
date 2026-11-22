@@ -16,16 +16,26 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.Campaign
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.PersonRemove
 import androidx.compose.material.icons.filled.QrCode2
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -50,15 +60,21 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.AdminAuditLogEntity
 import com.example.data.AppConfigEntity
+import com.example.data.CoAdminGrantEntity
+import com.example.data.CoAdminInviteEntity
 import com.example.data.UserProfile
 import com.example.data.VirtualVoucherEntity
+import com.example.security.PasswordHasher
 import com.example.ui.components.QrMatrixCanvas
 import com.example.ui.components.formatCoins
 import com.example.ui.components.formatTimestamp
@@ -81,58 +97,86 @@ import com.example.ui.theme.RubyRed
 import com.example.ui.theme.RubyRedBright
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
+import com.example.ui.viewmodel.AdminAccessRole
 import java.util.Locale
-
-private const val DEMO_ADMIN_PIN = "1234"
 
 @Composable
 fun AdminPanelScreen(
-    profile: UserProfile?,
+    currentUserProfile: UserProfile?,
+    adminRole: AdminAccessRole,
+    isVerifyingPassword: Boolean,
     appConfig: AppConfigEntity,
+    allUsers: List<UserProfile>,
     vouchers: List<VirtualVoucherEntity>,
     adminLogs: List<AdminAuditLogEntity>,
+    coAdminInvites: List<CoAdminInviteEntity>,
+    coAdminGrants: List<CoAdminGrantEntity>,
+    lastCreatedPassword: String?,
     totalPredictionsCount: Int,
+    onUnlockWithPassword: (String, (Boolean, String?) -> Unit) -> Unit,
+    onCreateCoAdminPassword: (String, String) -> Unit,
+    onClearLastCreatedPassword: () -> Unit,
+    onToggleCoAdminInvite: (String, Boolean, String) -> Unit,
+    onDeleteCoAdminInvite: (String, String) -> Unit,
+    onRevokeCoAdminUser: (String, String) -> Unit,
     onSaveConfig: (AppConfigEntity, String) -> Unit,
-    onAdjustUserCoins: (Long, String) -> Unit,
+    onAdjustUserCoins: (String, Long, String) -> Unit,
     onCreateVoucher: (Long, String) -> Unit,
     onBack: () -> Unit
 ) {
-    var isUnlocked by remember { mutableStateOf(false) }
-    var pinInput by remember { mutableStateOf("") }
-    var pinError by remember { mutableStateOf(false) }
-    var selectedTab by remember { mutableIntStateOf(0) } // 0=Overview, 1=Games, 2=Users, 3=QR & Logs
+    var enteredPanel by remember { mutableStateOf(false) }
+    var passwordInput by remember { mutableStateOf("") }
+    var passwordError by remember { mutableStateOf<String?>(null) }
+    var selectedTab by remember { mutableIntStateOf(0) }
+    var selectedPlayerUid by remember(currentUserProfile?.userId, allUsers) {
+        mutableStateOf(currentUserProfile?.userId ?: allUsers.firstOrNull()?.userId.orEmpty())
+    }
 
-    if (!isUnlocked) {
-        AdminPinGate(
-            pinInput = pinInput,
-            pinError = pinError,
-            onPinChange = {
-                if (it.length <= 6) {
-                    pinInput = it
-                    pinError = false
+    val isSuperAdmin = adminRole == AdminAccessRole.SUPER_ADMIN
+    val isAuthorized = adminRole != AdminAccessRole.NONE
+
+    // Hidden Admin / Co-Admin Password Login Page
+    if (!enteredPanel || !isAuthorized) {
+        AdminPasswordAccessScreen(
+            adminRole = adminRole,
+            userEmail = currentUserProfile?.email.orEmpty(),
+            passwordInput = passwordInput,
+            passwordError = passwordError,
+            isVerifying = isVerifyingPassword,
+            onPasswordChange = {
+                if (it.length <= 48) {
+                    passwordInput = it
+                    passwordError = null
                 }
             },
-            onSubmit = {
-                if (pinInput == DEMO_ADMIN_PIN) {
-                    isUnlocked = true
-                } else {
-                    pinError = true
+            onEnterAsAuthorized = { enteredPanel = true },
+            onSubmitPassword = {
+                passwordError = null
+                onUnlockWithPassword(passwordInput) { ok, err ->
+                    if (ok) {
+                        passwordInput = ""
+                        enteredPanel = true
+                    } else {
+                        passwordError = err ?: "Invalid Co-Admin password."
+                    }
                 }
-            },
-            onQuickDemoFill = {
-                pinInput = DEMO_ADMIN_PIN
-                isUnlocked = true
             },
             onBack = onBack
         )
         return
     }
 
+    val tabs = remember(isSuperAdmin) {
+        if (isSuperAdmin) listOf("Overview", "Games", "Users", "QR & Logs", "Co-Admins")
+        else listOf("Overview", "Games", "Users", "QR & Logs")
+    }
+    if (selectedTab >= tabs.size) selectedTab = 0
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
             .background(ObsidianCanvas),
-        contentPadding = PaddingValues(bottom = 26.dp),
+        contentPadding = PaddingValues(bottom = 28.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         // Header
@@ -150,14 +194,32 @@ fun AdminPanelScreen(
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = TextPrimary)
                     }
                     Column {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(
+                                text = if (isSuperAdmin) "Main Admin Console" else "Co-Admin Console",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = AmberGoldTop
+                            )
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = if (isSuperAdmin) NeonEmerald.copy(alpha = 0.2f) else ElectricViolet.copy(alpha = 0.24f)
+                            ) {
+                                Text(
+                                    text = if (isSuperAdmin) "OWNER" else "CO-ADMIN",
+                                    fontFamily = JetBrainsMonoFontFamily,
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isSuperAdmin) NeonEmeraldBright else ElectricVioletBright,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
                         Text(
-                            text = "Admin Command Center",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = AmberGoldTop
-                        )
-                        Text(
-                            text = "Live Game Engine • Virtual Wallet • QR Manager",
+                            text = "Cloud Synced • Firebase Live Engine & Team Controls",
                             style = MaterialTheme.typography.bodySmall,
                             color = TextSecondary
                         )
@@ -174,20 +236,17 @@ fun AdminPanelScreen(
             }
         }
 
-        // 4 Admin Tabs
+        // Scrollable Admin Tabs
         item {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 14.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 14.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                listOf("Overview", "Games", "Users", "QR & Logs").forEachIndexed { idx, label ->
+                itemsIndexed(tabs) { idx, label ->
                     val active = selectedTab == idx
                     Box(
                         contentAlignment = Alignment.Center,
                         modifier = Modifier
-                            .weight(1f)
                             .height(40.dp)
                             .clip(RoundedCornerShape(10.dp))
                             .background(
@@ -195,11 +254,12 @@ fun AdminPanelScreen(
                                 else Brush.horizontalGradient(listOf(ObsidianCard, ObsidianCard))
                             )
                             .clickable { selectedTab = idx }
+                            .padding(horizontal = 16.dp)
                             .testTag("admin_tab_$idx")
                     ) {
                         Text(
                             text = label,
-                            style = MaterialTheme.typography.labelMedium,
+                            style = MaterialTheme.typography.labelLarge,
                             fontWeight = if (active) FontWeight.ExtraBold else FontWeight.Medium,
                             color = if (active) Color.White else TextSecondary
                         )
@@ -210,7 +270,7 @@ fun AdminPanelScreen(
 
         when (selectedTab) {
             0 -> {
-                // Live KPI Metrics
+                // Live Cloud KPI Metrics
                 item {
                     Column(
                         modifier = Modifier.padding(horizontal = 14.dp),
@@ -218,15 +278,15 @@ fun AdminPanelScreen(
                     ) {
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             AdminKpiCard(
-                                title = "USER WALLET",
-                                value = "${formatCoins(profile?.virtualCoins ?: 0L)} VC",
-                                accent = CoinGoldSoft,
+                                title = "CLOUD PLAYERS",
+                                value = allUsers.size.coerceAtLeast(1).toString(),
+                                accent = CyanPulse,
                                 modifier = Modifier.weight(1f)
                             )
                             AdminKpiCard(
-                                title = "PREDICTIONS",
-                                value = totalPredictionsCount.toString(),
-                                accent = CyanPulse,
+                                title = "YOUR WALLET",
+                                value = "${formatCoins(currentUserProfile?.virtualCoins ?: 0L)} VC",
+                                accent = CoinGoldSoft,
                                 modifier = Modifier.weight(1f)
                             )
                         }
@@ -244,7 +304,7 @@ fun AdminPanelScreen(
                                 modifier = Modifier.weight(1f)
                             )
                             AdminKpiCard(
-                                title = "QR VOUCHERS",
+                                title = "CLOUD VOUCHERS",
                                 value = "${vouchers.count { !it.redeemed }} Active",
                                 accent = ElectricVioletBright,
                                 modifier = Modifier.weight(1f)
@@ -276,14 +336,14 @@ fun AdminPanelScreen(
                             ) {
                                 Icon(Icons.Filled.Campaign, contentDescription = null, tint = AmberGoldTop)
                                 Text(
-                                    text = "Global Home Announcement Ticker",
+                                    text = "Global Live Announcement (All Devices)",
                                     style = MaterialTheme.typography.titleMedium,
                                     color = TextPrimary
                                 )
                             }
                             OutlinedTextField(
                                 value = announcementDraft,
-                                onValueChange = { if (it.length <= 180) announcementDraft = it },
+                                onValueChange = { if (it.length <= 220) announcementDraft = it },
                                 minLines = 2,
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedBorderColor = AmberGoldTop,
@@ -299,7 +359,7 @@ fun AdminPanelScreen(
                                 onClick = {
                                     onSaveConfig(
                                         appConfig.copy(announcementText = announcementDraft.trim()),
-                                        "Updated Home announcement banner"
+                                        "Broadcasted announcement to all devices"
                                     )
                                 },
                                 shape = RoundedCornerShape(50),
@@ -309,7 +369,7 @@ fun AdminPanelScreen(
                                     .height(44.dp)
                                     .testTag("admin_save_announcement_button")
                             ) {
-                                Text("Broadcast to Home Lobby", fontWeight = FontWeight.Bold)
+                                Text("Broadcast Live via Firebase", fontWeight = FontWeight.Bold)
                             }
                         }
                     }
@@ -317,7 +377,7 @@ fun AdminPanelScreen(
             }
 
             1 -> {
-                // Game Modes Toggle & Multipliers & Next Round Override
+                // Game Modes Toggle, Multipliers & Engine Mode
                 item {
                     var rgMult by remember(appConfig.redGreenMultiplier) { mutableDoubleStateOf(appConfig.redGreenMultiplier) }
                     var vMult by remember(appConfig.violetMultiplier) { mutableDoubleStateOf(appConfig.violetMultiplier) }
@@ -326,7 +386,6 @@ fun AdminPanelScreen(
                         modifier = Modifier.padding(horizontal = 14.dp),
                         verticalArrangement = Arrangement.spacedBy(14.dp)
                     ) {
-                        // Arena Enable/Disable Switches
                         Surface(
                             shape = RoundedCornerShape(18.dp),
                             color = ObsidianCard,
@@ -337,7 +396,7 @@ fun AdminPanelScreen(
                                 modifier = Modifier.padding(16.dp),
                                 verticalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Text("WinGo Arena Switches", style = MaterialTheme.typography.titleMedium, color = TextPrimary)
+                                Text("Global WinGo Arena Switches", style = MaterialTheme.typography.titleMedium, color = TextPrimary)
                                 AdminToggleRow("WinGo 30sec Arena", appConfig.mode30sEnabled) {
                                     onSaveConfig(appConfig.copy(mode30sEnabled = it), "WinGo 30s ${if (it) "enabled" else "paused"}")
                                 }
@@ -353,7 +412,6 @@ fun AdminPanelScreen(
                             }
                         }
 
-                        // Payout Multipliers
                         Surface(
                             shape = RoundedCornerShape(18.dp),
                             color = ObsidianCard,
@@ -400,12 +458,11 @@ fun AdminPanelScreen(
                                     colors = ButtonDefaults.buttonColors(containerColor = AmberOrangeMid, contentColor = Color.White),
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    Text("Apply Multipliers", fontWeight = FontWeight.Bold)
+                                    Text("Sync Multipliers to Cloud", fontWeight = FontWeight.Bold)
                                 }
                             }
                         }
 
-                        // Next-Round Demo Override Control
                         Surface(
                             shape = RoundedCornerShape(18.dp),
                             color = ObsidianCard,
@@ -416,9 +473,9 @@ fun AdminPanelScreen(
                                 modifier = Modifier.padding(16.dp),
                                 verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
-                                Text("Next Round Engine Mode (Demo)", style = MaterialTheme.typography.titleMedium, color = TextPrimary)
+                                Text("Engine Result Mode (Demo)", style = MaterialTheme.typography.titleMedium, color = TextPrimary)
                                 Text(
-                                    text = "Active Mode: ${appConfig.forcedNextColor?.let { "Next Settlement -> $it" } ?: "Auto Fair (SHA-256)"}",
+                                    text = "Active Mode: ${appConfig.forcedNextColor?.let { "Override -> $it" } ?: "Auto Fair (SHA-256)"}",
                                     fontFamily = JetBrainsMonoFontFamily,
                                     fontSize = 12.sp,
                                     color = CoinGoldSoft
@@ -452,7 +509,7 @@ fun AdminPanelScreen(
                                                 fontWeight = FontWeight.Bold,
                                                 color = if (active) Color.White else TextSecondary,
                                                 modifier = Modifier.padding(vertical = 10.dp),
-                                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                                textAlign = TextAlign.Center
                                             )
                                         }
                                     }
@@ -464,26 +521,33 @@ fun AdminPanelScreen(
             }
 
             2 -> {
-                // Users & Virtual Coin Wallet Management
+                // Cloud Users & Multi-Player Wallet Manager
                 item {
-                    var reasonInput by remember { mutableStateOf("Admin demo reward") }
-                    Surface(
-                        shape = RoundedCornerShape(18.dp),
-                        color = ObsidianCard,
-                        border = BorderStroke(1.dp, ObsidianBorder),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 14.dp)
+                    val playersList = allUsers.ifEmpty { listOfNotNull(currentUserProfile) }
+                    val targetPlayer = playersList.firstOrNull { it.userId == selectedPlayerUid } ?: playersList.firstOrNull()
+                    var reasonInput by remember { mutableStateOf("Admin virtual demo reward") }
+
+                    Column(
+                        modifier = Modifier.padding(horizontal = 14.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        Column(
-                            modifier = Modifier.padding(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            Text("Active Device Player", style = MaterialTheme.typography.titleMedium, color = TextPrimary)
+                        Text(
+                            text = "Select Cloud Player (${playersList.size})",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = TextPrimary
+                        )
+
+                        playersList.forEach { player ->
+                            val isSelected = player.userId == targetPlayer?.userId
                             Surface(
+                                onClick = { selectedPlayerUid = player.userId },
                                 shape = RoundedCornerShape(14.dp),
-                                color = ObsidianCanvas,
-                                border = BorderStroke(1.dp, ObsidianBorder)
+                                color = if (isSelected) ObsidianCardElevated else ObsidianCard,
+                                border = BorderStroke(
+                                    width = if (isSelected) 1.5.dp else 1.dp,
+                                    color = if (isSelected) AmberGoldTop else ObsidianBorder
+                                ),
+                                modifier = Modifier.fillMaxWidth()
                             ) {
                                 Row(
                                     modifier = Modifier
@@ -492,73 +556,90 @@ fun AdminPanelScreen(
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Column {
-                                        Text(profile?.displayName ?: "Chroma Player", style = MaterialTheme.typography.titleSmall, color = TextPrimary)
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(player.displayName, style = MaterialTheme.typography.titleSmall, color = TextPrimary)
                                         Text(
-                                            text = "${profile?.publicUserId ?: "CP-DEMO01"} • ${profile?.totalWins ?: 0}/${profile?.totalGames ?: 0} Wins",
+                                            text = "${player.publicUserId} • ${player.email}",
                                             fontFamily = JetBrainsMonoFontFamily,
-                                            fontSize = 11.sp,
+                                            fontSize = 10.sp,
                                             color = TextSecondary
                                         )
                                     }
                                     Text(
-                                        text = "${formatCoins(profile?.virtualCoins ?: 0L)} VC",
+                                        text = "${formatCoins(player.virtualCoins)} VC",
                                         fontFamily = JetBrainsMonoFontFamily,
                                         fontWeight = FontWeight.ExtraBold,
-                                        fontSize = 16.sp,
+                                        fontSize = 15.sp,
                                         color = CoinGoldSoft
                                     )
                                 }
                             }
+                        }
 
-                            OutlinedTextField(
-                                value = reasonInput,
-                                onValueChange = { reasonInput = it },
-                                label = { Text("Ledger Note") },
-                                singleLine = true,
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedBorderColor = AmberGoldTop,
-                                    unfocusedBorderColor = ObsidianBorder,
-                                    focusedTextColor = TextPrimary,
-                                    unfocusedTextColor = TextPrimary
-                                ),
+                        if (targetPlayer != null) {
+                            Surface(
+                                shape = RoundedCornerShape(18.dp),
+                                color = ObsidianCard,
+                                border = BorderStroke(1.dp, AmberGoldTop.copy(alpha = 0.45f)),
                                 modifier = Modifier.fillMaxWidth()
-                            )
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                listOf(500L to "+500", 1000L to "+1K", 5000L to "+5K").forEach { (amt, lbl) ->
-                                    Button(
-                                        onClick = { onAdjustUserCoins(amt, reasonInput) },
-                                        shape = RoundedCornerShape(12.dp),
-                                        colors = ButtonDefaults.buttonColors(containerColor = NeonEmerald, contentColor = Color.White),
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .testTag("admin_credit_$amt")
+                                Column(
+                                    modifier = Modifier.padding(16.dp),
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    Text(
+                                        text = "Adjust Coins for ${targetPlayer.displayName}",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        color = AmberGoldTop
+                                    )
+                                    OutlinedTextField(
+                                        value = reasonInput,
+                                        onValueChange = { if (it.length <= 160) reasonInput = it },
+                                        label = { Text("Ledger Note") },
+                                        singleLine = true,
+                                        colors = OutlinedTextFieldDefaults.colors(
+                                            focusedBorderColor = AmberGoldTop,
+                                            unfocusedBorderColor = ObsidianBorder,
+                                            focusedTextColor = TextPrimary,
+                                            unfocusedTextColor = TextPrimary
+                                        ),
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
-                                        Text("$lbl VC", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                        listOf(500L to "+500", 1000L to "+1K", 5000L to "+5K").forEach { (amt, lbl) ->
+                                            Button(
+                                                onClick = { onAdjustUserCoins(targetPlayer.userId, amt, reasonInput) },
+                                                shape = RoundedCornerShape(12.dp),
+                                                colors = ButtonDefaults.buttonColors(containerColor = NeonEmerald, contentColor = Color.White),
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .testTag("admin_credit_$amt")
+                                            ) {
+                                                Text("$lbl VC", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                            }
+                                        }
+                                    }
+                                    OutlinedButton(
+                                        onClick = { onAdjustUserCoins(targetPlayer.userId, -500L, reasonInput) },
+                                        shape = RoundedCornerShape(12.dp),
+                                        border = BorderStroke(1.dp, RubyRed),
+                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = RubyRedBright),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text("Debit -500 Virtual Coins", fontWeight = FontWeight.Bold)
                                     }
                                 }
-                            }
-
-                            OutlinedButton(
-                                onClick = { onAdjustUserCoins(-500L, reasonInput) },
-                                shape = RoundedCornerShape(12.dp),
-                                border = BorderStroke(1.dp, RubyRed),
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = RubyRedBright),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text("Debit -500 Virtual Coins", fontWeight = FontWeight.Bold)
                             }
                         }
                     }
                 }
             }
 
-            else -> {
-                // QR Manager + Voucher Generator + Audit Log
+            3 -> {
+                // Cloud Counter QR + Gift Voucher QR Generator + Audit Logs
                 item {
                     var qrLabelDraft by remember(appConfig.adminQrLabel) { mutableStateOf(appConfig.adminQrLabel) }
                     var qrPayloadDraft by remember(appConfig.adminQrPayload) { mutableStateOf(appConfig.adminQrPayload) }
@@ -567,7 +648,6 @@ fun AdminPanelScreen(
                         modifier = Modifier.padding(horizontal = 14.dp),
                         verticalArrangement = Arrangement.spacedBy(14.dp)
                     ) {
-                        // Admin Counter QR Customization
                         Surface(
                             shape = RoundedCornerShape(18.dp),
                             color = ObsidianCard,
@@ -584,12 +664,12 @@ fun AdminPanelScreen(
                                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
                                     Icon(Icons.Filled.QrCode2, contentDescription = null, tint = AmberGoldTop)
-                                    Text("Demo Counter QR Code Settings", style = MaterialTheme.typography.titleMedium, color = TextPrimary)
+                                    Text("Global Demo Counter QR Settings", style = MaterialTheme.typography.titleMedium, color = TextPrimary)
                                 }
                                 QrMatrixCanvas(payload = qrPayloadDraft.ifBlank { "CHROMAPULSE:DEMO" }, size = 148.dp)
                                 OutlinedTextField(
                                     value = qrLabelDraft,
-                                    onValueChange = { qrLabelDraft = it },
+                                    onValueChange = { if (it.length <= 80) qrLabelDraft = it },
                                     label = { Text("QR Title") },
                                     singleLine = true,
                                     colors = OutlinedTextFieldDefaults.colors(
@@ -602,7 +682,7 @@ fun AdminPanelScreen(
                                 )
                                 OutlinedTextField(
                                     value = qrPayloadDraft,
-                                    onValueChange = { qrPayloadDraft = it },
+                                    onValueChange = { if (it.length <= 200) qrPayloadDraft = it },
                                     label = { Text("Virtual Demo QR Data") },
                                     singleLine = true,
                                     colors = OutlinedTextFieldDefaults.colors(
@@ -620,19 +700,18 @@ fun AdminPanelScreen(
                                                 adminQrLabel = qrLabelDraft.trim().ifBlank { "ChromaPulse Counter" },
                                                 adminQrPayload = qrPayloadDraft.trim().ifBlank { "CHROMAPULSE:DEMO" }
                                             ),
-                                            "Updated Demo Counter QR"
+                                            "Updated global Demo Counter QR"
                                         )
                                     },
                                     shape = RoundedCornerShape(50),
                                     colors = ButtonDefaults.buttonColors(containerColor = AmberOrangeMid, contentColor = Color.White),
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    Text("Save Counter QR", fontWeight = FontWeight.Bold)
+                                    Text("Sync Counter QR to All Users", fontWeight = FontWeight.Bold)
                                 }
                             }
                         }
 
-                        // Generate Gift Voucher QR
                         Surface(
                             shape = RoundedCornerShape(18.dp),
                             color = ObsidianCard,
@@ -643,7 +722,7 @@ fun AdminPanelScreen(
                                 modifier = Modifier.padding(16.dp),
                                 verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
-                                Text("Generate Virtual Gift Voucher QR", style = MaterialTheme.typography.titleMedium, color = TextPrimary)
+                                Text("Generate Cloud Gift Voucher QR", style = MaterialTheme.typography.titleMedium, color = TextPrimary)
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -664,11 +743,11 @@ fun AdminPanelScreen(
                             }
                         }
 
-                        Text("Admin Audit Trail (${adminLogs.size})", style = MaterialTheme.typography.titleMedium, color = TextPrimary)
+                        Text("Cloud Audit Trail (${adminLogs.size})", style = MaterialTheme.typography.titleMedium, color = TextPrimary)
                     }
                 }
 
-                items(adminLogs.take(20), key = { it.id }) { log ->
+                items(adminLogs.take(25), key = { it.id.ifBlank { it.action + it.createdAtMs } }) { log ->
                     Surface(
                         shape = RoundedCornerShape(12.dp),
                         color = ObsidianCard,
@@ -677,15 +756,272 @@ fun AdminPanelScreen(
                             .fillMaxWidth()
                             .padding(horizontal = 14.dp)
                     ) {
-                        Column(modifier = Modifier.padding(12.dp)) {
+                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
-                                Text(log.action, fontFamily = JetBrainsMonoFontFamily, fontWeight = FontWeight.Bold, fontSize = 11.sp, color = AmberGoldTop)
-                                Text(formatTimestamp(log.createdAtMs), fontFamily = JetBrainsMonoFontFamily, fontSize = 10.sp, color = TextSecondary)
+                                Text(
+                                    text = "${log.action} • ${log.actorRole}",
+                                    fontFamily = JetBrainsMonoFontFamily,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp,
+                                    color = AmberGoldTop
+                                )
+                                Text(
+                                    text = formatTimestamp(log.createdAtMs),
+                                    fontFamily = JetBrainsMonoFontFamily,
+                                    fontSize = 10.sp,
+                                    color = TextSecondary
+                                )
                             }
                             Text(log.details, style = MaterialTheme.typography.bodySmall, color = TextPrimary)
+                            Text(log.actorEmail, fontFamily = JetBrainsMonoFontFamily, fontSize = 10.sp, color = TextSecondary)
+                        }
+                    }
+                }
+            }
+
+            4 -> {
+                // Main Admin ONLY: Create & Manage Co-Admin Passwords & Active Co-Admins
+                item {
+                    val clipboard = LocalClipboardManager.current
+                    var coAdminLabel by remember { mutableStateOf("") }
+                    var coAdminPassword by remember { mutableStateOf("") }
+
+                    Column(
+                        modifier = Modifier.padding(horizontal = 14.dp),
+                        verticalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(18.dp),
+                            color = ObsidianCard,
+                            border = BorderStroke(1.dp, AmberGoldTop.copy(alpha = 0.6f)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(Icons.Filled.Key, contentDescription = null, tint = AmberGoldTop)
+                                    Text("Create Co-Admin Password", style = MaterialTheme.typography.titleMedium, color = TextPrimary)
+                                }
+                                Text(
+                                    text = "Password is stored as a one-way SHA-256 hash in Cloud Firestore. Share the password with your Co-Admin — they tap 'ChromaPulse' 5 times and enter it to open the Admin Panel.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = TextSecondary
+                                )
+
+                                OutlinedTextField(
+                                    value = coAdminLabel,
+                                    onValueChange = { if (it.length <= 50) coAdminLabel = it },
+                                    label = { Text("Co-Admin Name / Shift Label") },
+                                    placeholder = { Text("e.g., Night Moderator") },
+                                    singleLine = true,
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedBorderColor = AmberGoldTop,
+                                        unfocusedBorderColor = ObsidianBorder,
+                                        focusedTextColor = TextPrimary,
+                                        unfocusedTextColor = TextPrimary
+                                    ),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("coadmin_label_input")
+                                )
+
+                                OutlinedTextField(
+                                    value = coAdminPassword,
+                                    onValueChange = { if (it.length <= 48) coAdminPassword = it },
+                                    label = { Text("Co-Admin Password (min 6 chars)") },
+                                    singleLine = true,
+                                    trailingIcon = {
+                                        IconButton(onClick = {
+                                            coAdminPassword = PasswordHasher.generateStrongPassword(10)
+                                        }) {
+                                            Icon(Icons.Filled.Refresh, contentDescription = "Generate password", tint = AmberGoldTop)
+                                        }
+                                    },
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedBorderColor = AmberGoldTop,
+                                        unfocusedBorderColor = ObsidianBorder,
+                                        focusedTextColor = TextPrimary,
+                                        unfocusedTextColor = TextPrimary
+                                    ),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("coadmin_password_input")
+                                )
+
+                                Button(
+                                    onClick = {
+                                        if (coAdminPassword.trim().length >= 6) {
+                                            onCreateCoAdminPassword(
+                                                coAdminLabel.trim().ifBlank { "Co-Admin" },
+                                                coAdminPassword.trim()
+                                            )
+                                            coAdminLabel = ""
+                                            coAdminPassword = ""
+                                        }
+                                    },
+                                    enabled = coAdminPassword.trim().length >= 6,
+                                    shape = RoundedCornerShape(50),
+                                    colors = ButtonDefaults.buttonColors(containerColor = AmberOrangeDeep, contentColor = Color.White),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(46.dp)
+                                        .testTag("coadmin_create_button")
+                                ) {
+                                    Text("Create Co-Admin Password", fontWeight = FontWeight.ExtraBold)
+                                }
+
+                                if (lastCreatedPassword != null) {
+                                    Surface(
+                                        shape = RoundedCornerShape(14.dp),
+                                        color = NeonEmerald.copy(alpha = 0.14f),
+                                        border = BorderStroke(1.dp, NeonEmerald),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Column(
+                                            modifier = Modifier.padding(12.dp),
+                                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Text(
+                                                text = "New Co-Admin Password Ready (Copy Now):",
+                                                style = MaterialTheme.typography.labelMedium,
+                                                color = NeonEmeraldBright
+                                            )
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    text = lastCreatedPassword,
+                                                    fontFamily = JetBrainsMonoFontFamily,
+                                                    fontWeight = FontWeight.ExtraBold,
+                                                    fontSize = 16.sp,
+                                                    color = CoinGoldSoft
+                                                )
+                                                Row {
+                                                    IconButton(onClick = {
+                                                        clipboard.setText(AnnotatedString(lastCreatedPassword))
+                                                    }) {
+                                                        Icon(Icons.Filled.ContentCopy, contentDescription = "Copy password", tint = AmberGoldTop)
+                                                    }
+                                                    OutlinedButton(
+                                                        onClick = onClearLastCreatedPassword,
+                                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                                    ) {
+                                                        Text("Hide", fontSize = 11.sp, color = TextSecondary)
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Text(
+                            text = "Created Co-Admin Passkeys (${coAdminInvites.size})",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = TextPrimary
+                        )
+
+                        if (coAdminInvites.isEmpty()) {
+                            Surface(
+                                shape = RoundedCornerShape(14.dp),
+                                color = ObsidianCard,
+                                border = BorderStroke(1.dp, ObsidianBorder),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = "No Co-Admin passkeys created yet. Create one above to share Admin access securely.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = TextSecondary,
+                                    modifier = Modifier.padding(14.dp)
+                                )
+                            }
+                        } else {
+                            coAdminInvites.forEach { invite ->
+                                Surface(
+                                    shape = RoundedCornerShape(14.dp),
+                                    color = ObsidianCard,
+                                    border = BorderStroke(
+                                        1.dp,
+                                        if (invite.active) NeonEmerald.copy(alpha = 0.5f) else RubyRed.copy(alpha = 0.4f)
+                                    ),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(12.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(invite.label, style = MaterialTheme.typography.titleSmall, color = TextPrimary)
+                                            Text(
+                                                text = "SHA-256: ${invite.inviteHash.take(14)}… • ${if (invite.active) "ACTIVE" else "REVOKED"}",
+                                                fontFamily = JetBrainsMonoFontFamily,
+                                                fontSize = 10.sp,
+                                                color = if (invite.active) NeonEmeraldBright else RubyRedBright
+                                            )
+                                        }
+                                        Switch(
+                                            checked = invite.active,
+                                            onCheckedChange = { enabled ->
+                                                onToggleCoAdminInvite(invite.inviteHash, enabled, invite.label)
+                                            },
+                                            colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = NeonEmerald)
+                                        )
+                                        IconButton(onClick = { onDeleteCoAdminInvite(invite.inviteHash, invite.label) }) {
+                                            Icon(Icons.Filled.Delete, contentDescription = "Delete passkey", tint = RubyRedBright)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Text(
+                            text = "Active Co-Admin Accounts (${coAdminGrants.size})",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = TextPrimary
+                        )
+
+                        coAdminGrants.forEach { grant ->
+                            Surface(
+                                shape = RoundedCornerShape(14.dp),
+                                color = ObsidianCard,
+                                border = BorderStroke(1.dp, ElectricViolet.copy(alpha = 0.5f)),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(12.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(grant.displayName, style = MaterialTheme.typography.titleSmall, color = TextPrimary)
+                                        Text(
+                                            text = "${grant.email} • Key: ${grant.label}",
+                                            fontFamily = JetBrainsMonoFontFamily,
+                                            fontSize = 10.sp,
+                                            color = TextSecondary
+                                        )
+                                    }
+                                    IconButton(onClick = { onRevokeCoAdminUser(grant.userId, grant.email) }) {
+                                        Icon(Icons.Filled.PersonRemove, contentDescription = "Remove Co-Admin", tint = RubyRedBright)
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -695,12 +1031,15 @@ fun AdminPanelScreen(
 }
 
 @Composable
-private fun AdminPinGate(
-    pinInput: String,
-    pinError: Boolean,
-    onPinChange: (String) -> Unit,
-    onSubmit: () -> Unit,
-    onQuickDemoFill: () -> Unit,
+private fun AdminPasswordAccessScreen(
+    adminRole: AdminAccessRole,
+    userEmail: String,
+    passwordInput: String,
+    passwordError: String?,
+    isVerifying: Boolean,
+    onPasswordChange: (String) -> Unit,
+    onEnterAsAuthorized: () -> Unit,
+    onSubmitPassword: () -> Unit,
     onBack: () -> Unit
 ) {
     Column(
@@ -714,7 +1053,7 @@ private fun AdminPinGate(
         Surface(
             shape = RoundedCornerShape(24.dp),
             color = ObsidianCard,
-            border = BorderStroke(1.dp, AmberGoldTop.copy(alpha = 0.6f)),
+            border = BorderStroke(1.dp, AmberGoldTop.copy(alpha = 0.65f)),
             modifier = Modifier.fillMaxWidth()
         ) {
             Column(
@@ -722,56 +1061,139 @@ private fun AdminPinGate(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                Icon(Icons.Filled.Lock, contentDescription = null, tint = AmberGoldTop, modifier = Modifier.size(40.dp))
-                Text("Admin Panel Access", style = MaterialTheme.typography.headlineMedium, color = TextPrimary)
+                Icon(
+                    imageVector = if (adminRole != AdminAccessRole.NONE) Icons.Filled.VerifiedUser else Icons.Filled.Lock,
+                    contentDescription = null,
+                    tint = if (adminRole != AdminAccessRole.NONE) NeonEmeraldBright else AmberGoldTop,
+                    modifier = Modifier.size(44.dp)
+                )
+
                 Text(
-                    text = "Enter Admin Demo PIN (default: 1234) to manage games, virtual coins, announcements & QR vouchers.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = TextSecondary
+                    text = "Admin & Co-Admin Portal",
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = TextPrimary,
+                    textAlign = TextAlign.Center
                 )
-                OutlinedTextField(
-                    value = pinInput,
-                    onValueChange = onPinChange,
-                    label = { Text("Admin PIN") },
-                    singleLine = true,
-                    isError = pinError,
-                    visualTransformation = PasswordVisualTransformation(),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = AmberGoldTop,
-                        unfocusedBorderColor = ObsidianBorder,
-                        focusedTextColor = TextPrimary,
-                        unfocusedTextColor = TextPrimary
-                    ),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("admin_pin_input")
-                )
-                if (pinError) {
-                    Text("Incorrect PIN. Default demo PIN is 1234.", style = MaterialTheme.typography.bodySmall, color = RubyRedBright)
+
+                if (adminRole == AdminAccessRole.SUPER_ADMIN) {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = NeonEmerald.copy(alpha = 0.16f),
+                        border = BorderStroke(1.dp, NeonEmerald)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(Icons.Filled.Shield, contentDescription = null, tint = NeonEmeraldBright, modifier = Modifier.size(16.dp))
+                            Text(
+                                text = "Main Admin Verified ($userEmail)",
+                                fontFamily = JetBrainsMonoFontFamily,
+                                fontSize = 11.sp,
+                                color = NeonEmeraldBright
+                            )
+                        }
+                    }
+
+                    Button(
+                        onClick = onEnterAsAuthorized,
+                        shape = RoundedCornerShape(50),
+                        colors = ButtonDefaults.buttonColors(containerColor = AmberOrangeDeep, contentColor = Color.White),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(50.dp)
+                            .testTag("admin_super_enter_button")
+                    ) {
+                        Text("Open Main Admin Console", fontWeight = FontWeight.ExtraBold)
+                    }
+                } else {
+                    if (adminRole == AdminAccessRole.CO_ADMIN) {
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = ElectricViolet.copy(alpha = 0.18f),
+                            border = BorderStroke(1.dp, ElectricVioletBright)
+                        ) {
+                            Text(
+                                text = "Active Co-Admin Session Verified",
+                                fontFamily = JetBrainsMonoFontFamily,
+                                fontSize = 11.sp,
+                                color = ElectricVioletBright,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
+                            )
+                        }
+                        Button(
+                            onClick = onEnterAsAuthorized,
+                            shape = RoundedCornerShape(50),
+                            colors = ButtonDefaults.buttonColors(containerColor = NeonEmerald, contentColor = Color.White),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .testTag("admin_coadmin_resume_button")
+                        ) {
+                            Text("Enter Co-Admin Panel", fontWeight = FontWeight.ExtraBold)
+                        }
+                    }
+
+                    Text(
+                        text = "Enter the Co-Admin password created by the Main Admin to unlock Cloud Admin controls.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextSecondary,
+                        textAlign = TextAlign.Center
+                    )
+
+                    OutlinedTextField(
+                        value = passwordInput,
+                        onValueChange = onPasswordChange,
+                        label = { Text("Co-Admin Password") },
+                        singleLine = true,
+                        isError = passwordError != null,
+                        visualTransformation = PasswordVisualTransformation(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = AmberGoldTop,
+                            unfocusedBorderColor = ObsidianBorder,
+                            focusedTextColor = TextPrimary,
+                            unfocusedTextColor = TextPrimary
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("admin_password_input")
+                    )
+
+                    if (passwordError != null) {
+                        Text(
+                            text = passwordError,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = RubyRedBright,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+
+                    Button(
+                        onClick = onSubmitPassword,
+                        enabled = !isVerifying && passwordInput.trim().length >= 4,
+                        shape = RoundedCornerShape(50),
+                        colors = ButtonDefaults.buttonColors(containerColor = AmberOrangeDeep, contentColor = Color.White),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("admin_unlock_button")
+                    ) {
+                        if (isVerifying) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                color = Color.White,
+                                strokeWidth = 2.dp
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Verifying...", fontWeight = FontWeight.Bold)
+                        } else {
+                            Text("Unlock Admin Panel", fontWeight = FontWeight.ExtraBold)
+                        }
+                    }
                 }
-                Button(
-                    onClick = onSubmit,
-                    shape = RoundedCornerShape(50),
-                    colors = ButtonDefaults.buttonColors(containerColor = AmberOrangeDeep, contentColor = Color.White),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp)
-                        .testTag("admin_unlock_button")
-                ) {
-                    Text("Unlock Admin Panel", fontWeight = FontWeight.ExtraBold)
-                }
-                OutlinedButton(
-                    onClick = onQuickDemoFill,
-                    shape = RoundedCornerShape(50),
-                    border = BorderStroke(1.dp, NeonEmerald),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = NeonEmeraldBright),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(44.dp)
-                        .testTag("admin_quick_enter_button")
-                ) {
-                    Text("Instant Demo Enter (PIN 1234)", fontWeight = FontWeight.Bold)
-                }
+
                 OutlinedButton(
                     onClick = onBack,
                     shape = RoundedCornerShape(50),
