@@ -2,10 +2,13 @@ package com.example.data
 
 import android.content.Context
 import com.example.R
+import com.example.domain.BetType
 import com.example.domain.ColorPredictionEngine
 import com.example.domain.GameMode
 import com.example.domain.PredictionColor
+import com.example.domain.SizeChoice
 import com.example.domain.VerifiableRoundOutcome
+import com.example.domain.WinGoBetTarget
 import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.DocumentSnapshot
@@ -263,6 +266,40 @@ class ChromaPulseRepository(
         )
     }
 
+    fun observeUserWalletRequests(userId: String): Flow<List<WalletRequestEntity>> = flow {
+        val uid = requireUserId()
+        val path = "wallet_requests"
+        emitAll(
+            db.collection("wallet_requests")
+                .whereEqualTo("userId", uid)
+                .limit(60)
+                .snapshots()
+                .map { snap ->
+                    snap.toObjects(WalletRequestEntity::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                        .sortedByDescending { it.createdAtMs }
+                }
+                .wrapFirestoreListener(uid, path, OperationType.LIST)
+        )
+    }
+
+    fun observeAllWalletRequestsForAdmin(): Flow<List<WalletRequestEntity>> = flow {
+        val uid = requireUserId()
+        val path = "wallet_requests"
+        emitAll(
+            db.collection("wallet_requests")
+                .limit(100)
+                .snapshots()
+                .map { snap ->
+                    snap.toObjects(WalletRequestEntity::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                        .sortedWith(
+                            compareBy<WalletRequestEntity> { if (it.status == "PENDING") 0 else 1 }
+                                .thenByDescending { it.createdAtMs }
+                        )
+                }
+                .wrapFirestoreListener(uid, path, OperationType.LIST)
+        )
+    }
+
     // ---- Player Bootstrapping ----
 
     suspend fun ensureCloudPlayerInitialized(): Result<Unit> {
@@ -414,16 +451,18 @@ class ChromaPulseRepository(
     suspend fun submitPrediction(
         mode: GameMode,
         periodId: String,
-        selectedColor: PredictionColor,
+        target: WinGoBetTarget,
         stakeCoins: Long
     ): Result<Unit> {
         var path = "users/predictions"
         return try {
             val uid = requireUserId()
             require(stakeCoins in ColorPredictionEngine.MIN_STAKE_COINS..ColorPredictionEngine.MAX_STAKE_COINS) {
-                "Virtual stake must be between ${ColorPredictionEngine.MIN_STAKE_COINS} and ${ColorPredictionEngine.MAX_STAKE_COINS} VC."
+                "Bet amount must be between ${ColorPredictionEngine.MIN_STAKE_COINS} and ${ColorPredictionEngine.MAX_STAKE_COINS} VC."
             }
-            val predId = ColorPredictionEngine.buildRoundDocId(mode, periodId)
+            // Unique doc ID per bet enables unlimited multiple bets in the SAME round (same number, color, or Big/Small)
+            val uniqueSuffix = "${System.currentTimeMillis()}_${Random.nextInt(1000, 9999)}"
+            val predId = "${ColorPredictionEngine.buildRoundDocId(mode, periodId)}_$uniqueSuffix"
             path = "users/$uid/predictions/$predId"
 
             val configSnap = db.collection("app_config").document("global").get().await()
@@ -451,11 +490,8 @@ class ChromaPulseRepository(
                 if (user.accountStatus == "SUSPENDED") {
                     throw IllegalStateException("This demo account is paused by Admin.")
                 }
-                if (tx.get(predRef).exists()) {
-                    throw IllegalStateException("Prediction already locked for period $periodId.")
-                }
                 if (user.virtualCoins < stakeCoins) {
-                    throw IllegalStateException("Insufficient virtual coins. Claim daily bonus or refill.")
+                    throw IllegalStateException("Insufficient balance! Please Deposit or claim Daily Bonus.")
                 }
 
                 val newBalance = user.virtualCoins - stakeCoins
@@ -470,20 +506,23 @@ class ChromaPulseRepository(
                         "updatedAt" to FieldValue.serverTimestamp()
                     )
                 )
-                tx.set(
-                    predRef,
-                    mapOf(
-                        "userId" to uid,
-                        "modeId" to mode.id,
-                        "periodId" to periodId,
-                        "selectedColor" to selectedColor.name,
-                        "stakeCoins" to stakeCoins,
-                        "status" to "PENDING",
-                        "rewardCoins" to 0L,
-                        "createdAt" to FieldValue.serverTimestamp(),
-                        "updatedAt" to FieldValue.serverTimestamp()
-                    )
-                )
+                val predPayload = buildMap<String, Any?> {
+                    put("userId", uid)
+                    put("modeId", mode.id)
+                    put("periodId", periodId)
+                    put("betType", target.betType.name)
+                    put("betLabel", target.label.take(40))
+                    put("selectedColor", target.color.name)
+                    put("selectedDigit", target.digit)
+                    put("selectedSize", target.sizeChoice?.name)
+                    put("stakeCoins", stakeCoins)
+                    put("status", "PENDING")
+                    put("rewardCoins", 0L)
+                    put("createdAt", FieldValue.serverTimestamp())
+                    put("updatedAt", FieldValue.serverTimestamp())
+                }.filterValues { it != null }
+                tx.set(predRef, predPayload)
+
                 tx.set(
                     txRef,
                     mapOf(
@@ -493,7 +532,7 @@ class ChromaPulseRepository(
                         "previousBalance" to user.virtualCoins,
                         "newBalance" to newBalance,
                         "referenceId" to periodId,
-                        "description" to "${mode.shortLabel} prediction: ${selectedColor.displayName} ($periodId)",
+                        "description" to "${mode.shortLabel} bet: ${target.label} ($periodId)".take(220),
                         "createdAt" to FieldValue.serverTimestamp()
                     )
                 )
@@ -591,15 +630,19 @@ class ChromaPulseRepository(
                 val lbSnap = tx.get(lbRef)
 
                 val selectedColor = PredictionColor.fromRaw(currentPred.selectedColor)
-                val multiplier = when (selectedColor) {
-                    PredictionColor.VIOLET -> config.violetMultiplier
-                    PredictionColor.RED, PredictionColor.GREEN -> config.redGreenMultiplier
-                }
-                val wonCoins = if (selectedColor == effectiveOutcome.winningColor) {
-                    (currentPred.stakeCoins.toDouble() * multiplier).roundToLong().coerceAtMost(100_000L)
-                } else {
-                    0L
-                }
+                val betType = BetType.fromRaw(currentPred.betType)
+                val selectedSize = SizeChoice.fromRaw(currentPred.selectedSize)
+                val wonCoins = ColorPredictionEngine.calculateBetReward(
+                    betType = betType,
+                    selectedColor = selectedColor,
+                    selectedDigit = currentPred.selectedDigit,
+                    selectedSize = selectedSize,
+                    winningColor = effectiveOutcome.winningColor,
+                    winningDigit = effectiveOutcome.resultDigit,
+                    stakeCoins = currentPred.stakeCoins,
+                    redGreenMultiplier = config.redGreenMultiplier,
+                    violetMultiplier = config.violetMultiplier
+                )
                 val didWin = wonCoins > 0L
 
                 val nextCoins = user.virtualCoins + wonCoins
@@ -614,6 +657,7 @@ class ChromaPulseRepository(
                     mapOf(
                         "status" to if (didWin) "WON" else "LOST",
                         "winningColor" to effectiveOutcome.winningColor.name,
+                        "winningDigit" to effectiveOutcome.resultDigit,
                         "rewardCoins" to wonCoins,
                         "resultHash" to effectiveOutcome.resultHash,
                         "updatedAt" to FieldValue.serverTimestamp()
@@ -672,23 +716,24 @@ class ChromaPulseRepository(
                             "previousBalance" to user.virtualCoins,
                             "newBalance" to nextCoins,
                             "referenceId" to effectiveOutcome.periodId,
-                            "description" to "Won ${effectiveOutcome.mode.shortLabel} (${effectiveOutcome.winningColor.displayName})",
+                            "description" to "Won ${effectiveOutcome.mode.shortLabel} (${currentPred.displayPickLabel} -> #${effectiveOutcome.resultDigit})".take(220),
                             "createdAt" to FieldValue.serverTimestamp()
                         )
                     )
                 }
 
                 if (user.notifyResults) {
+                    val sizeLabel = if (effectiveOutcome.resultDigit >= 5) "Big" else "Small"
                     tx.set(
                         notifRef,
                         mapOf(
                             "userId" to uid,
                             "category" to if (didWin) "REWARD" else "ROUND_RESULT",
-                            "title" to if (didWin) "+$wonCoins Virtual Coins Won!" else "Round ${effectiveOutcome.periodId} Completed",
+                            "title" to if (didWin) "+$wonCoins VC Won!" else "Round ${effectiveOutcome.periodId} Settled",
                             "message" to if (didWin) {
-                                "Your ${selectedColor.displayName} pick matched ${effectiveOutcome.winningColor.displayName} (#${effectiveOutcome.resultDigit})."
+                                "Your ${currentPred.displayPickLabel} bet won! Result: #${effectiveOutcome.resultDigit} (${effectiveOutcome.winningColor.displayName} • $sizeLabel)."
                             } else {
-                                "${effectiveOutcome.mode.title} landed on ${effectiveOutcome.winningColor.displayName} (#${effectiveOutcome.resultDigit})."
+                                "${effectiveOutcome.mode.title} landed on #${effectiveOutcome.resultDigit} (${effectiveOutcome.winningColor.displayName} • $sizeLabel)."
                             },
                             "referenceId" to effectiveOutcome.periodId,
                             "read" to false,
@@ -1473,6 +1518,349 @@ class ChromaPulseRepository(
             throw e
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.DELETE, path)
+            Result.failure(e)
+        }
+    }
+
+    // ---- Deposit (Admin QR) & Withdrawal (UPI / Paytm) Request Workflows ----
+
+    suspend fun submitDepositRequest(amountCoins: Long, utrReference: String): Result<Unit> {
+        var path = "wallet_requests"
+        return try {
+            val uid = requireUserId()
+            require(amountCoins in 10L..500_000L) { "Deposit amount must be between 10 and 500,000 VC." }
+            val cleanRef = utrReference.trim().take(150)
+            require(cleanRef.length >= 4) { "Enter a valid UTR / Transaction Reference ID (min 4 chars)." }
+
+            val userSnap = db.collection("users").document(uid).get().await()
+            val user = userSnap.toObject(UserProfile::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                ?: throw IllegalStateException("Player wallet not initialized yet.")
+
+            val reqId = "dep_${System.currentTimeMillis()}_${Random.nextInt(1000, 9999)}"
+            path = "wallet_requests/$reqId"
+            db.collection("wallet_requests").document(reqId).set(
+                mapOf(
+                    "userId" to uid,
+                    "userName" to user.displayName.take(60),
+                    "userEmail" to user.email.take(120),
+                    "publicUserId" to user.publicUserId.take(32),
+                    "requestType" to "DEPOSIT",
+                    "amountCoins" to amountCoins,
+                    "paymentMethod" to "QR_UPI",
+                    "paymentDetails" to cleanRef,
+                    "status" to "PENDING",
+                    "createdAt" to FieldValue.serverTimestamp(),
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            ).await()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.CREATE, path)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun submitWithdrawalRequest(
+        amountCoins: Long,
+        paymentMethod: String,
+        paymentDetails: String
+    ): Result<Unit> {
+        var path = "wallet_requests"
+        return try {
+            val uid = requireUserId()
+            require(amountCoins in 50L..500_000L) { "Withdrawal amount must be between 50 and 500,000 VC." }
+            val method = if (paymentMethod == "PAYTM") "PAYTM" else "UPI_ID"
+            val cleanDetails = paymentDetails.trim().take(150)
+            require(cleanDetails.length >= 5) {
+                if (method == "PAYTM") "Enter a valid Paytm mobile number." else "Enter a valid UPI ID (e.g. name@upi)."
+            }
+
+            val reqId = "wd_${System.currentTimeMillis()}_${Random.nextInt(1000, 9999)}"
+            path = "wallet_requests/$reqId"
+            val userRef = db.collection("users").document(uid)
+            val reqRef = db.collection("wallet_requests").document(reqId)
+            val txRef = userRef.collection("wallet_transactions").document("tx_$reqId")
+
+            db.runTransaction { tx ->
+                val userSnap = tx.get(userRef)
+                val user = userSnap.toObject(UserProfile::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                    ?: throw IllegalStateException("Player wallet not initialized yet.")
+                if (user.accountStatus == "SUSPENDED") {
+                    throw IllegalStateException("This account is currently paused by Admin.")
+                }
+                if (user.virtualCoins < amountCoins) {
+                    throw IllegalStateException("Insufficient balance for withdrawal.")
+                }
+
+                val newBalance = user.virtualCoins - amountCoins
+                tx.update(
+                    userRef,
+                    mapOf(
+                        "virtualCoins" to newBalance,
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                )
+                tx.set(
+                    reqRef,
+                    mapOf(
+                        "userId" to uid,
+                        "userName" to user.displayName.take(60),
+                        "userEmail" to user.email.take(120),
+                        "publicUserId" to user.publicUserId.take(32),
+                        "requestType" to "WITHDRAWAL",
+                        "amountCoins" to amountCoins,
+                        "paymentMethod" to method,
+                        "paymentDetails" to cleanDetails,
+                        "status" to "PENDING",
+                        "createdAt" to FieldValue.serverTimestamp(),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                )
+                tx.set(
+                    txRef,
+                    mapOf(
+                        "userId" to uid,
+                        "txType" to "WITHDRAWAL_REQUEST",
+                        "amount" to -amountCoins,
+                        "previousBalance" to user.virtualCoins,
+                        "newBalance" to newBalance,
+                        "referenceId" to reqId,
+                        "description" to "Withdrawal request ($method: $cleanDetails)".take(220),
+                        "createdAt" to FieldValue.serverTimestamp()
+                    )
+                )
+            }.await()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.WRITE, path)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun adminApproveDepositRequest(
+        requestId: String,
+        adminNote: String,
+        actorRole: String
+    ): Result<Long> {
+        val path = "wallet_requests/$requestId"
+        return try {
+            requireUserId()
+            val reqRef = db.collection("wallet_requests").document(requestId)
+            val cleanNote = adminNote.trim().take(180).ifBlank { "QR deposit verified & coins credited" }
+            val adminEmail = currentUserEmail()
+
+            val credited = db.runTransaction { tx ->
+                val reqSnap = tx.get(reqRef)
+                val req = reqSnap.toObject(WalletRequestEntity::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                    ?: throw IllegalStateException("Request not found.")
+                if (req.status != "PENDING" || req.requestType != "DEPOSIT") {
+                    throw IllegalStateException("Deposit request already processed.")
+                }
+
+                val userRef = db.collection("users").document(req.userId)
+                val userSnap = tx.get(userRef)
+                val user = userSnap.toObject(UserProfile::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                    ?: throw IllegalStateException("Target player wallet not found.")
+
+                val newBalance = (user.virtualCoins + req.amountCoins).coerceAtMost(100_000_000L)
+                tx.update(
+                    userRef,
+                    mapOf(
+                        "virtualCoins" to newBalance,
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                )
+                tx.update(
+                    reqRef,
+                    mapOf(
+                        "status" to "APPROVED",
+                        "adminNote" to cleanNote,
+                        "processedByEmail" to adminEmail,
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                )
+                tx.set(
+                    userRef.collection("wallet_transactions").document("dep_ok_$requestId"),
+                    mapOf(
+                        "userId" to req.userId,
+                        "txType" to "DEPOSIT_CREDIT",
+                        "amount" to req.amountCoins,
+                        "previousBalance" to user.virtualCoins,
+                        "newBalance" to newBalance,
+                        "referenceId" to req.paymentDetails.take(120),
+                        "description" to "Deposit Approved (+${req.amountCoins} VC • Ref: ${req.paymentDetails})".take(220),
+                        "createdAt" to FieldValue.serverTimestamp()
+                    )
+                )
+                tx.set(
+                    userRef.collection("notifications").document("notif_dep_$requestId"),
+                    mapOf(
+                        "userId" to req.userId,
+                        "category" to "REWARD",
+                        "title" to "Deposit Approved! +${req.amountCoins} VC",
+                        "message" to "Admin verified your QR payment (${req.paymentDetails}) and credited +${req.amountCoins} VC.",
+                        "referenceId" to requestId,
+                        "read" to false,
+                        "createdAt" to FieldValue.serverTimestamp(),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                )
+                req.amountCoins
+            }.await()
+
+            writeAdminAuditLog("DEPOSIT_APPROVE", "Approved deposit $requestId (+$credited VC)", actorRole)
+            Result.success(credited)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.WRITE, path)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun adminVerifyWithdrawalRequest(
+        requestId: String,
+        adminNote: String,
+        actorRole: String
+    ): Result<Unit> {
+        val path = "wallet_requests/$requestId"
+        return try {
+            requireUserId()
+            val reqRef = db.collection("wallet_requests").document(requestId)
+            val cleanNote = adminNote.trim().take(180).ifBlank { "Withdrawal verified & completed by Admin" }
+            val adminEmail = currentUserEmail()
+
+            val summary = db.runTransaction { tx ->
+                val reqSnap = tx.get(reqRef)
+                val req = reqSnap.toObject(WalletRequestEntity::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                    ?: throw IllegalStateException("Request not found.")
+                if (req.status != "PENDING" || req.requestType != "WITHDRAWAL") {
+                    throw IllegalStateException("Withdrawal request already processed.")
+                }
+
+                tx.update(
+                    reqRef,
+                    mapOf(
+                        "status" to "VERIFIED",
+                        "adminNote" to cleanNote,
+                        "processedByEmail" to adminEmail,
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                )
+                tx.set(
+                    db.collection("users").document(req.userId).collection("notifications").document("notif_wd_$requestId"),
+                    mapOf(
+                        "userId" to req.userId,
+                        "category" to "ANNOUNCEMENT",
+                        "title" to "Withdrawal Verified (${req.amountCoins} VC)",
+                        "message" to "Admin verified your ${req.paymentMethod} withdrawal to ${req.paymentDetails}. $cleanNote".take(380),
+                        "referenceId" to requestId,
+                        "read" to false,
+                        "createdAt" to FieldValue.serverTimestamp(),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                )
+                "${req.amountCoins} VC to ${req.paymentDetails} (${req.userName})"
+            }.await()
+
+            writeAdminAuditLog("WITHDRAWAL_VERIFY", "Verified withdrawal $requestId: $summary", actorRole)
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.WRITE, path)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun adminRejectWalletRequest(
+        requestId: String,
+        reason: String,
+        actorRole: String
+    ): Result<Unit> {
+        val path = "wallet_requests/$requestId"
+        return try {
+            requireUserId()
+            val reqRef = db.collection("wallet_requests").document(requestId)
+            val cleanReason = reason.trim().take(180).ifBlank { "Request declined by Admin" }
+            val adminEmail = currentUserEmail()
+
+            val details = db.runTransaction { tx ->
+                val reqSnap = tx.get(reqRef)
+                val req = reqSnap.toObject(WalletRequestEntity::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                    ?: throw IllegalStateException("Request not found.")
+                if (req.status != "PENDING") {
+                    throw IllegalStateException("Request already processed.")
+                }
+
+                val userRef = db.collection("users").document(req.userId)
+                if (req.requestType == "WITHDRAWAL") {
+                    val userSnap = tx.get(userRef)
+                    val user = userSnap.toObject(UserProfile::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                    if (user != null) {
+                        val refundedBalance = (user.virtualCoins + req.amountCoins).coerceAtMost(100_000_000L)
+                        tx.update(
+                            userRef,
+                            mapOf(
+                                "virtualCoins" to refundedBalance,
+                                "updatedAt" to FieldValue.serverTimestamp()
+                            )
+                        )
+                        tx.set(
+                            userRef.collection("wallet_transactions").document("wd_ref_$requestId"),
+                            mapOf(
+                                "userId" to req.userId,
+                                "txType" to "WITHDRAWAL_REFUND",
+                                "amount" to req.amountCoins,
+                                "previousBalance" to user.virtualCoins,
+                                "newBalance" to refundedBalance,
+                                "referenceId" to requestId,
+                                "description" to "Withdrawal refunded: $cleanReason".take(220),
+                                "createdAt" to FieldValue.serverTimestamp()
+                            )
+                        )
+                    }
+                }
+
+                tx.update(
+                    reqRef,
+                    mapOf(
+                        "status" to "REJECTED",
+                        "adminNote" to cleanReason,
+                        "processedByEmail" to adminEmail,
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                )
+                tx.set(
+                    userRef.collection("notifications").document("notif_rej_$requestId"),
+                    mapOf(
+                        "userId" to req.userId,
+                        "category" to "ANNOUNCEMENT",
+                        "title" to "${req.requestType.lowercase().replaceFirstChar { it.uppercase() }} Declined",
+                        "message" to if (req.requestType == "WITHDRAWAL") {
+                            "Your withdrawal of ${req.amountCoins} VC was declined ($cleanReason) and refunded to your wallet."
+                        } else {
+                            "Your deposit request of ${req.amountCoins} VC was declined: $cleanReason"
+                        }.take(380),
+                        "referenceId" to requestId,
+                        "read" to false,
+                        "createdAt" to FieldValue.serverTimestamp(),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                )
+                "${req.requestType} ${req.amountCoins} VC (${req.userName})"
+            }.await()
+
+            writeAdminAuditLog("WALLET_REQ_REJECT", "Rejected $requestId ($details): $cleanReason", actorRole)
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.WRITE, path)
             Result.failure(e)
         }
     }

@@ -15,6 +15,58 @@ enum class PredictionColor(
     }
 }
 
+enum class BetType(val label: String) {
+    COLOR("Color"),
+    NUMBER("Number"),
+    SIZE("Big/Small");
+
+    companion object {
+        fun fromRaw(raw: String?): BetType =
+            entries.firstOrNull { it.name.equals(raw, ignoreCase = true) } ?: COLOR
+    }
+}
+
+enum class SizeChoice(
+    val displayName: String,
+    val rangeLabel: String,
+    val multiplier: Double
+) {
+    BIG("Big", "5 – 9", 2.0),
+    SMALL("Small", "0 – 4", 2.0);
+
+    companion object {
+        fun fromRaw(raw: String?): SizeChoice? =
+            entries.firstOrNull { it.name.equals(raw, ignoreCase = true) }
+    }
+}
+
+data class WinGoBetTarget(
+    val betType: BetType,
+    val color: PredictionColor,
+    val digit: Int? = null,
+    val sizeChoice: SizeChoice? = null
+) {
+    val label: String
+        get() = when (betType) {
+            BetType.COLOR -> color.displayName
+            BetType.NUMBER -> "Number ${digit ?: 0}"
+            BetType.SIZE -> sizeChoice?.displayName ?: "Big"
+        }
+
+    fun multiplier(redGreenMult: Double = 2.0, violetMult: Double = 4.5): Double = when (betType) {
+        BetType.COLOR -> if (color == PredictionColor.VIOLET) violetMult else redGreenMult
+        BetType.NUMBER -> 9.0
+        BetType.SIZE -> sizeChoice?.multiplier ?: 2.0
+    }
+
+    val multiplierLabel: String
+        get() = when (betType) {
+            BetType.COLOR -> color.multiplierLabel
+            BetType.NUMBER -> "9.0x"
+            BetType.SIZE -> "2.0x"
+        }
+}
+
 enum class GameMode(
     val id: String,
     val title: String,

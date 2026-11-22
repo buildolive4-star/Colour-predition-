@@ -18,6 +18,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.CardGiftcard
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.NotificationsActive
@@ -38,6 +40,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -62,6 +65,7 @@ import com.example.ui.theme.ObsidianCanvas
 import com.example.ui.theme.ObsidianCard
 import com.example.ui.theme.ObsidianCardElevated
 import com.example.ui.theme.ObsidianSurface
+import com.example.ui.theme.RubyRed
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 
@@ -71,6 +75,8 @@ fun VirtualWalletSheet(
     profile: UserProfile?,
     transactions: List<WalletTransaction>,
     isClaimingBonus: Boolean,
+    onOpenDeposit: () -> Unit,
+    onOpenWithdraw: () -> Unit,
     onClaimDailyBonus: () -> Unit,
     onClaimDemoRefill: () -> Unit,
     onDismiss: () -> Unit
@@ -124,11 +130,49 @@ fun VirtualWalletSheet(
                         color = CoinGoldSoft
                     )
                     Text(
-                        text = "Entertainment virtual coins only — no deposits, no withdrawals, no monetary value.",
+                        text = "One side Withdraw (UPI / Paytm) • One side Deposit (Admin QR)",
                         style = MaterialTheme.typography.bodySmall,
                         color = TextSecondary
                     )
                     Spacer(modifier = Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Button(
+                            onClick = onOpenWithdraw,
+                            shape = RoundedCornerShape(50),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = RubyRed,
+                                contentColor = Color.White
+                            ),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(46.dp)
+                                .testTag("wallet_sheet_withdraw_button")
+                        ) {
+                            Icon(Icons.Filled.ArrowUpward, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.size(5.dp))
+                            Text("Withdraw", fontWeight = FontWeight.ExtraBold)
+                        }
+                        Button(
+                            onClick = onOpenDeposit,
+                            shape = RoundedCornerShape(50),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = NeonEmerald,
+                                contentColor = Color.White
+                            ),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(46.dp)
+                                .testTag("wallet_sheet_deposit_button")
+                        ) {
+                            Icon(Icons.Filled.ArrowDownward, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.size(5.dp))
+                            Text("Deposit", fontWeight = FontWeight.ExtraBold)
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(2.dp))
                     Button(
                         onClick = onClaimDailyBonus,
                         enabled = !claimedToday && !isClaimingBonus,

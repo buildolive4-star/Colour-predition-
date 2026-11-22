@@ -160,6 +160,34 @@ object ColorPredictionEngine {
         return (stakeCoins.toDouble() * selectedColor.multiplier).roundToLong()
     }
 
+    fun calculateBetReward(
+        betType: BetType,
+        selectedColor: PredictionColor,
+        selectedDigit: Int?,
+        selectedSize: SizeChoice?,
+        winningColor: PredictionColor,
+        winningDigit: Int,
+        stakeCoins: Long,
+        redGreenMultiplier: Double = 2.0,
+        violetMultiplier: Double = 4.5
+    ): Long {
+        val raw = when (betType) {
+            BetType.COLOR -> {
+                val mult = if (selectedColor == PredictionColor.VIOLET) violetMultiplier else redGreenMultiplier
+                if (selectedColor == winningColor) stakeCoins.toDouble() * mult else 0.0
+            }
+            BetType.NUMBER -> {
+                if (selectedDigit != null && selectedDigit == winningDigit) stakeCoins.toDouble() * 9.0 else 0.0
+            }
+            BetType.SIZE -> {
+                val isBig = winningDigit >= 5
+                val matched = (selectedSize == SizeChoice.BIG && isBig) || (selectedSize == SizeChoice.SMALL && !isBig)
+                if (matched) stakeCoins.toDouble() * 2.0 else 0.0
+            }
+        }
+        return raw.roundToLong().coerceIn(0L, 1_000_000L)
+    }
+
     fun formatCountdown(remainingMs: Long): String {
         val totalSeconds = ((remainingMs + 999L) / 1000L).coerceAtLeast(0L)
         val minutes = totalSeconds / 60L

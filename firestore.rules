@@ -80,11 +80,16 @@ service cloud.firestore {
       return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
              isValidMode(data.modeId) &&
              data.periodId is string && data.periodId.size() >= 4 && data.periodId.size() <= 40 &&
+             (!('betType' in data) || data.betType in ['COLOR', 'NUMBER', 'SIZE']) &&
+             (!('betLabel' in data) || (data.betLabel is string && data.betLabel.size() <= 40)) &&
              isValidColor(data.selectedColor) &&
-             data.stakeCoins is int && data.stakeCoins >= 10 && data.stakeCoins <= 10000 &&
+             (!('selectedDigit' in data) || data.selectedDigit == null || (data.selectedDigit is int && data.selectedDigit >= 0 && data.selectedDigit <= 9)) &&
+             (!('selectedSize' in data) || data.selectedSize == null || data.selectedSize in ['BIG', 'SMALL']) &&
+             data.stakeCoins is int && data.stakeCoins >= 10 && data.stakeCoins <= 100000 &&
              data.status in ['PENDING', 'WON', 'LOST'] &&
              (!('winningColor' in data) || data.winningColor == null || isValidColor(data.winningColor)) &&
-             data.rewardCoins is int && data.rewardCoins >= 0 && data.rewardCoins <= 100000 &&
+             (!('winningDigit' in data) || data.winningDigit == null || (data.winningDigit is int && data.winningDigit >= 0 && data.winningDigit <= 9)) &&
+             data.rewardCoins is int && data.rewardCoins >= 0 && data.rewardCoins <= 1000000 &&
              (!('resultHash' in data) || data.resultHash == null || (data.resultHash is string && data.resultHash.size() <= 128)) &&
              data.createdAt is timestamp && data.createdAt <= request.time &&
              data.updatedAt is timestamp && data.updatedAt <= request.time;
@@ -96,7 +101,8 @@ service cloud.firestore {
                'WELCOME_BONUS', 'DAILY_BONUS', 'DEMO_REFILL',
                'PREDICTION_ENTRY', 'PREDICTION_REWARD',
                'MINI_GAME_ENTRY', 'MINI_GAME_REWARD',
-               'QR_VOUCHER_REDEEM', 'ADMIN_CREDIT', 'ADMIN_DEBIT'
+               'QR_VOUCHER_REDEEM', 'ADMIN_CREDIT', 'ADMIN_DEBIT',
+               'DEPOSIT_CREDIT', 'WITHDRAWAL_REQUEST', 'WITHDRAWAL_REFUND'
              ] &&
              data.amount is int && data.amount >= -1000000 && data.amount <= 1000000 &&
              data.previousBalance is int && data.previousBalance >= 0 &&
@@ -104,6 +110,22 @@ service cloud.firestore {
              data.referenceId is string && data.referenceId.size() <= 128 &&
              data.description is string && data.description.size() >= 1 && data.description.size() <= 240 &&
              data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidWalletRequest(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.userName is string && data.userName.size() >= 1 && data.userName.size() <= 60 &&
+             data.userEmail is string && data.userEmail.size() <= 120 &&
+             data.publicUserId is string && data.publicUserId.size() >= 3 && data.publicUserId.size() <= 32 &&
+             data.requestType in ['DEPOSIT', 'WITHDRAWAL'] &&
+             data.amountCoins is int && data.amountCoins >= 10 && data.amountCoins <= 500000 &&
+             data.paymentMethod in ['QR_UPI', 'UPI_ID', 'PAYTM'] &&
+             data.paymentDetails is string && data.paymentDetails.size() >= 3 && data.paymentDetails.size() <= 160 &&
+             data.status in ['PENDING', 'APPROVED', 'VERIFIED', 'REJECTED'] &&
+             (!('adminNote' in data) || data.adminNote == null || (data.adminNote is string && data.adminNote.size() <= 200)) &&
+             (!('processedByEmail' in data) || data.processedByEmail == null || (data.processedByEmail is string && data.processedByEmail.size() <= 120)) &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
     }
 
     function isValidNotification(data) {
@@ -258,8 +280,10 @@ service cloud.firestore {
                            'status', 'rewardCoins', 'createdAt', 'updatedAt'
                          ]) &&
                          incoming().keys().hasOnly([
-                           'userId', 'modeId', 'periodId', 'selectedColor', 'stakeCoins',
-                           'status', 'winningColor', 'rewardCoins', 'resultHash', 'createdAt', 'updatedAt'
+                           'userId', 'modeId', 'periodId', 'betType', 'betLabel',
+                           'selectedColor', 'selectedDigit', 'selectedSize', 'stakeCoins',
+                           'status', 'winningColor', 'winningDigit', 'rewardCoins', 'resultHash',
+                           'createdAt', 'updatedAt'
                          ]) &&
                          isValidPrediction(incoming());
 
@@ -278,7 +302,7 @@ service cloud.firestore {
                              existing().status == 'PENDING' &&
                              incoming().status in ['WON', 'LOST'] &&
                              incoming().diff(existing()).affectedKeys().hasOnly([
-                               'status', 'winningColor', 'rewardCoins', 'resultHash', 'updatedAt'
+                               'status', 'winningColor', 'winningDigit', 'rewardCoins', 'resultHash', 'updatedAt'
                              ])
                            )
                          );
@@ -303,7 +327,7 @@ service cloud.firestore {
                          ]) &&
                          isValidWalletTransaction(incoming()) && (
                            isAdmin() ||
-                           (isOwner(userId) && !(incoming().txType in ['ADMIN_CREDIT', 'ADMIN_DEBIT']))
+                           (isOwner(userId) && !(incoming().txType in ['ADMIN_CREDIT', 'ADMIN_DEBIT', 'DEPOSIT_CREDIT', 'WITHDRAWAL_REFUND']))
                          );
 
         allow update, delete: if false;
@@ -544,6 +568,45 @@ service cloud.firestore {
                        );
 
       allow delete: if isValidId(uid) && (isSuperAdmin() || isOwner(uid));
+    }
+
+    // ---- Deposit & Withdrawal Requests (User creates PENDING; ONLY Admin / Co-Admin approves, verifies, or rejects) ----
+    match /wallet_requests/{requestId} {
+      allow get: if isSignedIn() && isValidId(requestId) && (isOwner(resource.data.userId) || isAdmin());
+      allow list: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+
+      allow create: if isSignedIn() &&
+                       isValidId(requestId) &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().status == 'PENDING' &&
+                       incoming().keys().hasAll([
+                         'userId', 'userName', 'userEmail', 'publicUserId',
+                         'requestType', 'amountCoins', 'paymentMethod', 'paymentDetails',
+                         'status', 'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'userId', 'userName', 'userEmail', 'publicUserId',
+                         'requestType', 'amountCoins', 'paymentMethod', 'paymentDetails',
+                         'status', 'adminNote', 'processedByEmail', 'createdAt', 'updatedAt'
+                       ]) &&
+                       isValidWalletRequest(incoming());
+
+      allow update: if isAdmin() &&
+                       isValidId(requestId) &&
+                       isValidWalletRequest(incoming()) &&
+                       existing().status == 'PENDING' &&
+                       incoming().status in ['APPROVED', 'VERIFIED', 'REJECTED'] &&
+                       incoming().userId == existing().userId &&
+                       incoming().requestType == existing().requestType &&
+                       incoming().amountCoins == existing().amountCoins &&
+                       incoming().paymentMethod == existing().paymentMethod &&
+                       incoming().paymentDetails == existing().paymentDetails &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'status', 'adminNote', 'processedByEmail', 'updatedAt'
+                       ]);
+
+      allow delete: if false;
     }
   }
 }

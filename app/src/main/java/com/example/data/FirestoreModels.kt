@@ -44,10 +44,15 @@ data class PredictionRecord(
     val userId: String = "",
     val modeId: String = "mode_30s",
     val periodId: String = "",
+    val betType: String = "COLOR",
+    val betLabel: String = "",
     val selectedColor: String = "GREEN",
+    val selectedDigit: Int? = null,
+    val selectedSize: String? = null,
     val stakeCoins: Long = 0L,
     val status: String = "PENDING",
     val winningColor: String? = null,
+    val winningDigit: Int? = null,
     val rewardCoins: Long = 0L,
     val resultHash: String? = null,
     @ServerTimestamp val createdAt: Timestamp? = null,
@@ -58,6 +63,16 @@ data class PredictionRecord(
 
     @get:Exclude
     val updatedAtMs: Long get() = updatedAt?.toDate()?.time ?: 0L
+
+    @get:Exclude
+    val displayPickLabel: String
+        get() = betLabel.ifBlank {
+            when (betType) {
+                "NUMBER" -> "Number ${selectedDigit ?: 0}"
+                "SIZE" -> if (selectedSize == "SMALL") "Small" else "Big"
+                else -> selectedColor.lowercase().replaceFirstChar { it.uppercase() }
+            }
+        }
 }
 
 @Keep
@@ -225,4 +240,29 @@ data class CoAdminGrantEntity(
 ) {
     @get:Exclude
     val createdAtMs: Long get() = createdAt?.toDate()?.time ?: 0L
+}
+
+@Keep
+@IgnoreExtraProperties
+data class WalletRequestEntity(
+    @DocumentId val id: String = "",
+    val userId: String = "",
+    val userName: String = "",
+    val userEmail: String = "",
+    val publicUserId: String = "",
+    val requestType: String = "DEPOSIT", // DEPOSIT or WITHDRAWAL
+    val amountCoins: Long = 0L,
+    val paymentMethod: String = "QR_UPI", // QR_UPI, UPI_ID, PAYTM
+    val paymentDetails: String = "", // UTR reference for deposit, UPI ID or Paytm No. for withdrawal
+    val status: String = "PENDING", // PENDING, APPROVED, VERIFIED, REJECTED
+    val adminNote: String? = null,
+    val processedByEmail: String? = null,
+    @ServerTimestamp val createdAt: Timestamp? = null,
+    @ServerTimestamp val updatedAt: Timestamp? = null
+) {
+    @get:Exclude
+    val createdAtMs: Long get() = createdAt?.toDate()?.time ?: 0L
+
+    @get:Exclude
+    val updatedAtMs: Long get() = updatedAt?.toDate()?.time ?: 0L
 }

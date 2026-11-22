@@ -34,7 +34,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Bolt
-import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Remove
@@ -42,12 +42,16 @@ import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -65,27 +69,34 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
 import com.example.data.PredictionRecord
 import com.example.data.UserProfile
 import com.example.domain.ActiveRoundSnapshot
+import com.example.domain.BetType
 import com.example.domain.ColorPredictionEngine
 import com.example.domain.GameMode
 import com.example.domain.PredictionColor
+import com.example.domain.SizeChoice
 import com.example.domain.VerifiableRoundOutcome
+import com.example.domain.WinGoBetTarget
 import com.example.ui.components.ColorOrbBadge
 import com.example.ui.components.EmptyStatePanel
 import com.example.ui.components.HowToPlayDialog
 import com.example.ui.components.RoundVerificationDialog
+import com.example.ui.components.WinCelebrationDialog
 import com.example.ui.components.WinGoHistoryTable
 import com.example.ui.components.WinGoModeSelectorBar
 import com.example.ui.components.WinGoNumberBall
 import com.example.ui.components.WinGoTicketCountdownCard
+import com.example.ui.components.WinPopupData
 import com.example.ui.components.accentColor
 import com.example.ui.components.brightColor
 import com.example.ui.components.deepColor
+import com.example.ui.components.digitBigSmallLabel
 import com.example.ui.components.digitToPredictionColor
 import com.example.ui.components.formatCoins
 import com.example.ui.components.formatEpochMs
@@ -93,7 +104,6 @@ import com.example.ui.components.formatTimestamp
 import com.example.ui.theme.AmberGoldTop
 import com.example.ui.theme.AmberOrangeDeep
 import com.example.ui.theme.AmberOrangeMid
-import com.example.ui.theme.CoinGold
 import com.example.ui.theme.CoinGoldSoft
 import com.example.ui.theme.CyanPulse
 import com.example.ui.theme.ElectricViolet
@@ -111,11 +121,14 @@ import com.example.ui.theme.RubyRedBright
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 import com.example.ui.viewmodel.RoundSettlementBanner
+import kotlin.math.roundToLong
 import kotlin.random.Random
 
 private val MULTIPLIERS = listOf(1, 5, 10, 20, 50, 100)
 private const val BASE_UNIT_COINS = 10L
 private const val HISTORY_PAGE_SIZE = 10
+private val SMALL_BLUE = Color(0xFF5FA5FA)
+private val SMALL_BLUE_DEEP = Color(0xFF3B82F6)
 
 @Composable
 fun GameArenaScreen(
@@ -128,9 +141,9 @@ fun GameArenaScreen(
     isSubmitting: Boolean,
     isClaimingBonus: Boolean,
     onSelectMode: (GameMode) -> Unit,
-    onSubmitPrediction: (GameMode, PredictionColor, Long) -> Unit,
-    onClaimDailyBonus: () -> Unit,
-    onClaimDemoRefill: () -> Unit,
+    onSubmitPrediction: (GameMode, WinGoBetTarget, Long) -> Unit,
+    onOpenDeposit: () -> Unit,
+    onOpenWithdraw: () -> Unit,
     onDismissBanner: () -> Unit,
     onOpenWallet: () -> Unit,
     onBack: () -> Unit
@@ -140,27 +153,52 @@ fun GameArenaScreen(
     val modePredictions = remember(predictions, selectedMode) {
         predictions.filter { it.modeId == selectedMode.id }
     }
-    val currentRoundPrediction = remember(modePredictions, activeRound?.periodId) {
-        modePredictions.firstOrNull { it.periodId == activeRound?.periodId }
+    // Unlimited multiple bets per round!
+    val currentRoundPredictions = remember(modePredictions, activeRound?.periodId) {
+        modePredictions.filter { it.periodId == activeRound?.periodId }
     }
     val recentOutcomes = recentOutcomesByMode[selectedMode].orEmpty()
 
-    var selectedColor by remember { mutableStateOf(PredictionColor.GREEN) }
-    var selectedBallDigit by remember { mutableStateOf<Int?>(null) }
+    var currentTarget by remember {
+        mutableStateOf(WinGoBetTarget(BetType.COLOR, PredictionColor.GREEN))
+    }
+    var activeBetSheetTarget by remember { mutableStateOf<WinGoBetTarget?>(null) }
     var stakeCoins by remember { mutableLongStateOf(100L) }
     var activeMultiplier by remember { mutableIntStateOf(10) }
-    var bottomTab by remember { mutableIntStateOf(0) } // 0 = Game history, 1 = Chart, 2 = My history
+    var bottomTab by remember { mutableIntStateOf(0) }
     var historyPage by remember(selectedMode) { mutableIntStateOf(0) }
     var showHowToPlay by remember { mutableStateOf(false) }
     var inspectedOutcome by remember { mutableStateOf<VerifiableRoundOutcome?>(null) }
+    var winPopupData by remember { mutableStateOf<WinPopupData?>(null) }
+    var lastCelebratedPeriod by remember { mutableStateOf<String?>(null) }
 
-    val todayUtc = remember { ColorPredictionEngine.formatUtcIsoDate(System.currentTimeMillis()) }
-    val bonusClaimedToday = profile?.lastDailyBonusDate == todayUtc
+    LaunchedEffect(latestBanner) {
+        if (latestBanner != null && latestBanner.userPredicted && latestBanner.didWin && latestBanner.rewardCoins > 0L) {
+            val key = "${latestBanner.mode.id}_${latestBanner.periodId}_${latestBanner.rewardCoins}"
+            if (lastCelebratedPeriod != key) {
+                lastCelebratedPeriod = key
+                val sizeLbl = digitBigSmallLabel(latestBanner.resultDigit)
+                winPopupData = WinPopupData(
+                    title = "WinGo ${latestBanner.mode.shortLabel.uppercase()} Win!",
+                    amountWon = latestBanner.rewardCoins,
+                    subtitle = "Period ${latestBanner.periodId} • Result #${latestBanner.resultDigit} (${latestBanner.winningColor.displayName} • $sizeLbl)",
+                    badgeText = "JACKPOT WINNER!"
+                )
+            }
+        }
+    }
+
     val availableCoins = profile?.virtualCoins ?: 0L
     val isLockedOrDone = activeRound == null || !activeRound.canPredict
-    val alreadyPredicted = currentRoundPrediction != null
-    val canInteract = !isLockedOrDone && !alreadyPredicted && !isSubmitting
-    val projectedReward = ColorPredictionEngine.calculateRewardCoins(selectedColor, selectedColor, stakeCoins)
+    val canInteract = !isLockedOrDone && !isSubmitting
+    val projectedReward = (stakeCoins.toDouble() * currentTarget.multiplier()).roundToLong()
+
+    fun openBetFor(target: WinGoBetTarget) {
+        if (!canInteract) return
+        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        currentTarget = target
+        activeBetSheetTarget = target
+    }
 
     LazyColumn(
         modifier = Modifier
@@ -169,10 +207,9 @@ fun GameArenaScreen(
         contentPadding = PaddingValues(bottom = 22.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        // Top ShreeWin / WinGo Curved Amber Backdrop + Floating Navy Wallet Card + 4-Mode Clock Bar
+        // Top Curved Amber Backdrop + Floating Navy Wallet Card (Withdraw left | Deposit right) + 4-Mode Clock Bar
         item {
             Column(modifier = Modifier.fillMaxWidth()) {
-                // Dark Top Bar
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -226,9 +263,7 @@ fun GameArenaScreen(
                     }
                 }
 
-                // Curved Sunset Amber Backdrop with Floating Navy Wallet Card & Mode Selector
                 Box(modifier = Modifier.fillMaxWidth()) {
-                    // Amber curved background header
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -247,7 +282,7 @@ fun GameArenaScreen(
                             .padding(horizontal = 14.dp, vertical = 12.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        // Floating Dark Navy Wallet Card
+                        // Floating Dark Navy Wallet Card: Left = Withdraw, Right = Deposit
                         Surface(
                             shape = RoundedCornerShape(18.dp),
                             color = ObsidianCard,
@@ -280,7 +315,7 @@ fun GameArenaScreen(
                                         modifier = Modifier.size(15.dp)
                                     )
                                     Text(
-                                        text = "Virtual Coin Wallet • Demo Only",
+                                        text = "Wallet balance",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = TextSecondary
                                     )
@@ -292,35 +327,29 @@ fun GameArenaScreen(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                                 ) {
-                                    // Coral-Red Pill: Daily Bonus
+                                    // Left Coral-Red Pill: Withdraw
                                     Button(
-                                        onClick = onClaimDailyBonus,
-                                        enabled = !bonusClaimedToday && !isClaimingBonus,
+                                        onClick = onOpenWithdraw,
                                         shape = RoundedCornerShape(50),
                                         colors = ButtonDefaults.buttonColors(
                                             containerColor = RubyRed,
-                                            contentColor = Color.White,
-                                            disabledContainerColor = ObsidianCardElevated,
-                                            disabledContentColor = TextSecondary
+                                            contentColor = Color.White
                                         ),
                                         modifier = Modifier
                                             .weight(1f)
                                             .height(42.dp)
-                                            .testTag("arena_daily_bonus_pill")
+                                            .testTag("arena_withdraw_pill")
                                     ) {
                                         Text(
-                                            text = if (bonusClaimedToday) "Daily Claimed" else "Daily +500 VC",
+                                            text = "Withdraw",
                                             style = MaterialTheme.typography.labelLarge,
                                             fontWeight = FontWeight.Bold
                                         )
                                     }
 
-                                    // Emerald-Green Pill: Wallet or Free Refill when low
-                                    val needsRefill = availableCoins < ColorPredictionEngine.DEMO_REFILL_THRESHOLD
+                                    // Right Emerald-Green Pill: Deposit
                                     Button(
-                                        onClick = {
-                                            if (needsRefill) onClaimDemoRefill() else onOpenWallet()
-                                        },
+                                        onClick = onOpenDeposit,
                                         shape = RoundedCornerShape(50),
                                         colors = ButtonDefaults.buttonColors(
                                             containerColor = NeonEmerald,
@@ -329,10 +358,10 @@ fun GameArenaScreen(
                                         modifier = Modifier
                                             .weight(1f)
                                             .height(42.dp)
-                                            .testTag("arena_wallet_action_pill")
+                                            .testTag("arena_deposit_pill")
                                     ) {
                                         Text(
-                                            text = if (needsRefill) "Refill +1,000 VC" else "Wallet Ledger",
+                                            text = "Deposit",
                                             style = MaterialTheme.typography.labelLarge,
                                             fontWeight = FontWeight.Bold
                                         )
@@ -341,7 +370,6 @@ fun GameArenaScreen(
                             }
                         }
 
-                        // 4-Column Circular Clock Mode Selector
                         WinGoModeSelectorBar(
                             selectedMode = selectedMode,
                             activeRounds = activeRounds,
@@ -381,7 +409,7 @@ fun GameArenaScreen(
             )
         }
 
-        // Green / Violet / Red Vibrant WinGo Color Buttons (Order matches Screenshot #1)
+        // Green / Violet / Red Color Buttons — Tap opens instant bet popup!
         item {
             Row(
                 modifier = Modifier
@@ -396,12 +424,10 @@ fun GameArenaScreen(
                 ).forEach { color ->
                     WinGoColorChoiceButton(
                         color = color,
-                        isSelected = selectedColor == color,
+                        isSelected = currentTarget.betType == BetType.COLOR && currentTarget.color == color,
                         enabled = canInteract,
                         onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            selectedColor = color
-                            selectedBallDigit = null
+                            openBetFor(WinGoBetTarget(BetType.COLOR, color))
                         },
                         modifier = Modifier.weight(1f)
                     )
@@ -409,7 +435,7 @@ fun GameArenaScreen(
             }
         }
 
-        // 0-9 Glossy 3D Number Balls Board (2 rows x 5 columns)
+        // 0-9 Glossy 3D Number Balls Board (9.0x exact match!) — Tap ANY number opens instant bet popup!
         item {
             Surface(
                 shape = RoundedCornerShape(16.dp),
@@ -425,6 +451,24 @@ fun GameArenaScreen(
                         .padding(horizontal = 12.dp, vertical = 14.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Tap Any Number to Bet",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = TextSecondary
+                        )
+                        Text(
+                            text = "Exact Number = 9.0x",
+                            fontFamily = JetBrainsMonoFontFamily,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = CoinGoldSoft
+                        )
+                    }
                     listOf(0..4, 5..9).forEach { range ->
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -432,16 +476,20 @@ fun GameArenaScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             range.forEach { digit ->
-                                val isPicked = selectedBallDigit == digit
+                                val isPicked = currentTarget.betType == BetType.NUMBER && currentTarget.digit == digit
                                 WinGoNumberBall(
                                     digit = digit,
                                     size = 54.dp,
                                     isSelected = isPicked,
                                     onClick = if (canInteract) {
                                         {
-                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                            selectedBallDigit = digit
-                                            selectedColor = digitToPredictionColor(digit)
+                                            openBetFor(
+                                                WinGoBetTarget(
+                                                    betType = BetType.NUMBER,
+                                                    color = digitToPredictionColor(digit),
+                                                    digit = digit
+                                                )
+                                            )
                                         }
                                     } else {
                                         null
@@ -455,7 +503,7 @@ fun GameArenaScreen(
             }
         }
 
-        // Random + X1/X5/X10/X20/X50/X100 Multiplier Strip + Virtual Coin Entry CTA
+        // Random + X1..X100 + Iconic BIG / SMALL Split Pill + Quick Place Bet CTA
         item {
             Surface(
                 shape = RoundedCornerShape(18.dp),
@@ -469,7 +517,7 @@ fun GameArenaScreen(
                     modifier = Modifier.padding(14.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    // Random + X1..X100 row (Screenshot #1 & #2)
+                    // Random + X1..X100 Multiplier Row
                     LazyRow(
                         horizontalArrangement = Arrangement.spacedBy(7.dp),
                         verticalAlignment = Alignment.CenterVertically
@@ -478,10 +526,14 @@ fun GameArenaScreen(
                             Surface(
                                 onClick = {
                                     if (canInteract) {
-                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                         val randomDigit = Random.nextInt(0, 10)
-                                        selectedBallDigit = randomDigit
-                                        selectedColor = digitToPredictionColor(randomDigit)
+                                        openBetFor(
+                                            WinGoBetTarget(
+                                                betType = BetType.NUMBER,
+                                                color = digitToPredictionColor(randomDigit),
+                                                digit = randomDigit
+                                            )
+                                        )
                                     }
                                 },
                                 shape = RoundedCornerShape(10.dp),
@@ -529,6 +581,101 @@ fun GameArenaScreen(
                         }
                     }
 
+                    // BIG (5-9) | SMALL (0-4) Signature Split Pill Bar — Tap to bet Big or Small!
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(50.dp)
+                            .clip(RoundedCornerShape(50))
+                    ) {
+                        val isBigSelected = currentTarget.betType == BetType.SIZE && currentTarget.sizeChoice == SizeChoice.BIG
+                        val isSmallSelected = currentTarget.betType == BetType.SIZE && currentTarget.sizeChoice == SizeChoice.SMALL
+
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxSize()
+                                .background(
+                                    if (canInteract) Brush.horizontalGradient(listOf(AmberGoldTop, AmberOrangeMid))
+                                    else Brush.horizontalGradient(listOf(ObsidianCardElevated, ObsidianCardElevated))
+                                )
+                                .border(
+                                    width = if (isBigSelected && canInteract) 2.5.dp else 0.dp,
+                                    color = if (isBigSelected && canInteract) Color.White else Color.Transparent,
+                                    shape = RoundedCornerShape(topStart = 50.dp, bottomStart = 50.dp)
+                                )
+                                .clickable(enabled = canInteract) {
+                                    openBetFor(
+                                        WinGoBetTarget(
+                                            betType = BetType.SIZE,
+                                            color = PredictionColor.GREEN,
+                                            sizeChoice = SizeChoice.BIG
+                                        )
+                                    )
+                                }
+                                .testTag("wingo_big_button")
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(
+                                    text = "Big",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = if (canInteract) Color.White else TextSecondary
+                                )
+                                Text(
+                                    text = "5–9 • 2.0x",
+                                    fontFamily = JetBrainsMonoFontFamily,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (canInteract) Color.White.copy(alpha = 0.9f) else TextSecondary
+                                )
+                            }
+                        }
+
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxSize()
+                                .background(
+                                    if (canInteract) Brush.horizontalGradient(listOf(SMALL_BLUE, SMALL_BLUE_DEEP))
+                                    else Brush.horizontalGradient(listOf(ObsidianCardElevated, ObsidianCardElevated))
+                                )
+                                .border(
+                                    width = if (isSmallSelected && canInteract) 2.5.dp else 0.dp,
+                                    color = if (isSmallSelected && canInteract) Color.White else Color.Transparent,
+                                    shape = RoundedCornerShape(topEnd = 50.dp, bottomEnd = 50.dp)
+                                )
+                                .clickable(enabled = canInteract) {
+                                    openBetFor(
+                                        WinGoBetTarget(
+                                            betType = BetType.SIZE,
+                                            color = PredictionColor.RED,
+                                            sizeChoice = SizeChoice.SMALL
+                                        )
+                                    )
+                                }
+                                .testTag("wingo_small_button")
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(
+                                    text = "Small",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = if (canInteract) Color.White else TextSecondary
+                                )
+                                Text(
+                                    text = "0–4 • 2.0x",
+                                    fontFamily = JetBrainsMonoFontFamily,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (canInteract) Color.White.copy(alpha = 0.9f) else TextSecondary
+                                )
+                            }
+                        }
+                    }
+
                     // Fine-tune +/- row + Projected Reward
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -542,7 +689,7 @@ fun GameArenaScreen(
                             IconButton(
                                 onClick = {
                                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    stakeCoins = (stakeCoins - 50L).coerceAtLeast(ColorPredictionEngine.MIN_STAKE_COINS)
+                                    stakeCoins = (stakeCoins - 10L).coerceAtLeast(ColorPredictionEngine.MIN_STAKE_COINS)
                                 },
                                 enabled = canInteract && stakeCoins > ColorPredictionEngine.MIN_STAKE_COINS,
                                 modifier = Modifier
@@ -551,7 +698,7 @@ fun GameArenaScreen(
                                     .background(ObsidianCardElevated)
                                     .testTag("stake_decrease_button")
                             ) {
-                                Icon(Icons.Filled.Remove, contentDescription = "Decrease virtual stake", tint = TextPrimary, modifier = Modifier.size(16.dp))
+                                Icon(Icons.Filled.Remove, contentDescription = "Decrease stake", tint = TextPrimary, modifier = Modifier.size(16.dp))
                             }
                             Text(
                                 text = "${formatCoins(stakeCoins)} VC",
@@ -563,7 +710,7 @@ fun GameArenaScreen(
                             IconButton(
                                 onClick = {
                                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    stakeCoins = (stakeCoins + 50L).coerceAtMost(ColorPredictionEngine.MAX_STAKE_COINS)
+                                    stakeCoins = (stakeCoins + 10L).coerceAtMost(ColorPredictionEngine.MAX_STAKE_COINS)
                                 },
                                 enabled = canInteract,
                                 modifier = Modifier
@@ -572,36 +719,40 @@ fun GameArenaScreen(
                                     .background(ObsidianCardElevated)
                                     .testTag("stake_increase_button")
                             ) {
-                                Icon(Icons.Filled.Add, contentDescription = "Increase virtual stake", tint = TextPrimary, modifier = Modifier.size(16.dp))
+                                Icon(Icons.Filled.Add, contentDescription = "Increase stake", tint = TextPrimary, modifier = Modifier.size(16.dp))
                             }
                         }
 
                         Column(horizontalAlignment = Alignment.End) {
                             Text(
-                                text = "Win Reward (${selectedColor.multiplierLabel})",
+                                text = "${currentTarget.label} (${currentTarget.multiplierLabel})",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = TextSecondary
                             )
                             Text(
-                                text = "+${formatCoins(projectedReward)} VC",
+                                text = "Win +${formatCoins(projectedReward)} VC",
                                 fontFamily = JetBrainsMonoFontFamily,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 14.sp,
-                                color = selectedColor.brightColor()
+                                color = NeonEmeraldBright
                             )
                         }
                     }
 
-                    // Lock Prediction Primary CTA
+                    // Quick 1-Tap Place Bet CTA (Supports Unlimited Multiple Bets!)
+                    val ctaColor = when (currentTarget.betType) {
+                        BetType.SIZE -> if (currentTarget.sizeChoice == SizeChoice.BIG) AmberOrangeMid else SMALL_BLUE_DEEP
+                        else -> currentTarget.color.accentColor()
+                    }
                     Button(
                         onClick = {
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            onSubmitPrediction(selectedMode, selectedColor, stakeCoins)
+                            onSubmitPrediction(selectedMode, currentTarget, stakeCoins)
                         },
                         enabled = canInteract && availableCoins >= stakeCoins,
                         shape = RoundedCornerShape(50),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = selectedColor.accentColor(),
+                            containerColor = ctaColor,
                             contentColor = Color.White,
                             disabledContainerColor = ObsidianCardElevated,
                             disabledContentColor = TextSecondary
@@ -619,15 +770,6 @@ fun GameArenaScreen(
                                     strokeWidth = 2.5.dp
                                 )
                             }
-                            alreadyPredicted -> {
-                                Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = "Locked ${currentRoundPrediction?.selectedColor} (${formatCoins(currentRoundPrediction?.stakeCoins ?: 0L)} VC)",
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
                             isLockedOrDone -> {
                                 Icon(Icons.Filled.Lock, contentDescription = null, modifier = Modifier.size(18.dp))
                                 Spacer(modifier = Modifier.width(8.dp))
@@ -639,14 +781,14 @@ fun GameArenaScreen(
                             }
                             availableCoins < stakeCoins -> {
                                 Text(
-                                    text = "Insufficient Virtual Coins",
+                                    text = "Insufficient Coins • Tap Deposit",
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.Bold
                                 )
                             }
                             else -> {
                                 Text(
-                                    text = "Lock ${selectedColor.displayName} • ${formatCoins(stakeCoins)} VC",
+                                    text = "Place Bet: ${currentTarget.label} • ${formatCoins(stakeCoins)} VC",
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.ExtraBold
                                 )
@@ -657,7 +799,76 @@ fun GameArenaScreen(
             }
         }
 
-        // 3-Tab History Bar (Game history | Chart | My history) matching Screenshot #2
+        // Live Multiple Active Bets Tracker for Current Round
+        if (currentRoundPredictions.isNotEmpty()) {
+            item {
+                val totalRoundStake = currentRoundPredictions.sumOf { it.stakeCoins }
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = ObsidianCard,
+                    border = BorderStroke(1.dp, NeonEmerald.copy(alpha = 0.6f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.CheckCircle,
+                                    contentDescription = null,
+                                    tint = NeonEmeraldBright,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text(
+                                    text = "Bet Successful • ${currentRoundPredictions.size} Active Bet${if (currentRoundPredictions.size > 1) "s" else ""}",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    color = NeonEmeraldBright
+                                )
+                            }
+                            Text(
+                                text = "Total ${formatCoins(totalRoundStake)} VC",
+                                fontFamily = JetBrainsMonoFontFamily,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = CoinGoldSoft
+                            )
+                        }
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(currentRoundPredictions, key = { it.id.ifBlank { "${it.periodId}_${it.createdAtMs}" } }) { bet ->
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = ObsidianCanvas,
+                                    border = BorderStroke(1.dp, ObsidianBorder)
+                                ) {
+                                    Text(
+                                        text = "${bet.displayPickLabel} • ${formatCoins(bet.stakeCoins)} VC",
+                                        fontFamily = JetBrainsMonoFontFamily,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = TextPrimary,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3-Tab History Bar (Game history | Chart | My history)
         item {
             Row(
                 modifier = Modifier
@@ -709,7 +920,6 @@ fun GameArenaScreen(
                     )
                 }
 
-                // Pagination Bar matching Screenshot #2 (<   1/2   >)
                 item {
                     Surface(
                         shape = RoundedCornerShape(14.dp),
@@ -784,13 +994,13 @@ fun GameArenaScreen(
                 if (modePredictions.isEmpty()) {
                     item {
                         EmptyStatePanel(
-                            title = "No predictions in ${selectedMode.title} yet",
-                            subtitle = "Pick Green, Violet, Red, or a numbered ball above to lock your virtual entry.",
+                            title = "No bets in ${selectedMode.title} yet",
+                            subtitle = "Tap Green, Violet, Red, any Number (0–9), or Big/Small above to place bets.",
                             modifier = Modifier.padding(horizontal = 14.dp)
                         )
                     }
                 } else {
-                    items(modePredictions.take(15), key = { it.id.ifBlank { it.periodId } }) { pred ->
+                    items(modePredictions.take(25), key = { it.id.ifBlank { "${it.periodId}_${it.createdAtMs}" } }) { pred ->
                         Box(modifier = Modifier.padding(horizontal = 14.dp)) {
                             PredictionRowCard(prediction = pred)
                         }
@@ -798,6 +1008,31 @@ fun GameArenaScreen(
                 }
             }
         }
+    }
+
+    // Instant Tap-to-Bet Modal Sheet (Opens when user clicks Green/Violet/Red, 0-9 Ball, or Big/Small!)
+    activeBetSheetTarget?.let { target ->
+        WinGoQuickBetSheet(
+            mode = selectedMode,
+            periodId = activeRound?.periodId ?: "--",
+            target = target,
+            initialStake = stakeCoins,
+            availableCoins = availableCoins,
+            isSubmitting = isSubmitting,
+            onPlaceBet = { chosenAmount ->
+                stakeCoins = chosenAmount
+                onSubmitPrediction(selectedMode, target, chosenAmount)
+                activeBetSheetTarget = null
+            },
+            onDismiss = { activeBetSheetTarget = null }
+        )
+    }
+
+    winPopupData?.let { data ->
+        WinCelebrationDialog(
+            data = data,
+            onDismiss = { winPopupData = null }
+        )
     }
 
     if (showHowToPlay) {
@@ -817,6 +1052,256 @@ fun GameArenaScreen(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun WinGoQuickBetSheet(
+    mode: GameMode,
+    periodId: String,
+    target: WinGoBetTarget,
+    initialStake: Long,
+    availableCoins: Long,
+    isSubmitting: Boolean,
+    onPlaceBet: (Long) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var unitAmount by remember { mutableLongStateOf(10L) }
+    var quantity by remember {
+        mutableIntStateOf((initialStake / 10L).toInt().coerceIn(1, 100))
+    }
+
+    val totalBet = (unitAmount * quantity)
+        .coerceIn(ColorPredictionEngine.MIN_STAKE_COINS, ColorPredictionEngine.MAX_STAKE_COINS)
+    val projectedWin = (totalBet.toDouble() * target.multiplier()).roundToLong()
+
+    val headerGradient = when (target.betType) {
+        BetType.SIZE -> if (target.sizeChoice == SizeChoice.BIG) {
+            listOf(AmberGoldTop, AmberOrangeDeep)
+        } else {
+            listOf(SMALL_BLUE, SMALL_BLUE_DEEP)
+        }
+        else -> listOf(target.color.accentColor(), target.color.deepColor())
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = ObsidianSurface,
+        contentColor = TextPrimary
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 18.dp)
+                .padding(bottom = 26.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            // Colored Bet Target Header Banner
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(Brush.horizontalGradient(headerGradient))
+                    .padding(horizontal = 16.dp, vertical = 14.dp)
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        text = "${mode.title} • #$periodId",
+                        fontFamily = JetBrainsMonoFontFamily,
+                        fontSize = 11.sp,
+                        color = Color.White.copy(alpha = 0.88f)
+                    )
+                    Text(
+                        text = "Select: ${target.label} (${target.multiplierLabel})",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = Color.White
+                    )
+                }
+            }
+
+            // Base Balance Unit Row (10, 50, 100, 500, 1000)
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Bet Amount", style = MaterialTheme.typography.labelMedium, color = TextSecondary)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    listOf(10L, 50L, 100L, 500L, 1000L).forEach { unit ->
+                        val active = unitAmount == unit
+                        Surface(
+                            onClick = { unitAmount = unit },
+                            shape = RoundedCornerShape(10.dp),
+                            color = if (active) NeonEmerald else ObsidianCard,
+                            border = BorderStroke(1.dp, if (active) NeonEmeraldBright else ObsidianBorder),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(
+                                text = "$unit",
+                                fontFamily = JetBrainsMonoFontFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp,
+                                color = if (active) Color.White else TextSecondary,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.padding(vertical = 9.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Quantity Stepper + X1..X100 Chips
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Quantity", style = MaterialTheme.typography.labelLarge, color = TextPrimary)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Surface(
+                        onClick = { quantity = (quantity - 1).coerceAtLeast(1) },
+                        shape = RoundedCornerShape(8.dp),
+                        color = ObsidianCardElevated,
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(Icons.Filled.Remove, contentDescription = "Decrease quantity", tint = TextPrimary, modifier = Modifier.size(18.dp))
+                        }
+                    }
+                    Text(
+                        text = "$quantity",
+                        fontFamily = JetBrainsMonoFontFamily,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 18.sp,
+                        color = CoinGoldSoft,
+                        modifier = Modifier.width(42.dp),
+                        textAlign = TextAlign.Center
+                    )
+                    Surface(
+                        onClick = { quantity = (quantity + 1).coerceAtMost(100) },
+                        shape = RoundedCornerShape(8.dp),
+                        color = ObsidianCardElevated,
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(Icons.Filled.Add, contentDescription = "Increase quantity", tint = TextPrimary, modifier = Modifier.size(18.dp))
+                        }
+                    }
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                MULTIPLIERS.forEach { m ->
+                    val active = quantity == m
+                    Surface(
+                        onClick = { quantity = m },
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (active) AmberOrangeMid else ObsidianCard,
+                        border = BorderStroke(1.dp, if (active) AmberGoldTop else ObsidianBorder),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(
+                            text = "X$m",
+                            fontFamily = JetBrainsMonoFontFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp,
+                            color = if (active) Color.White else TextSecondary,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        )
+                    }
+                }
+            }
+
+            // Summary Row
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = ObsidianCard,
+                border = BorderStroke(1.dp, ObsidianBorder),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text("Total Bet", style = MaterialTheme.typography.labelSmall, color = TextSecondary)
+                        Text(
+                            text = "${formatCoins(totalBet)} VC",
+                            fontFamily = JetBrainsMonoFontFamily,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 16.sp,
+                            color = CoinGoldSoft
+                        )
+                    }
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text("Potential Win", style = MaterialTheme.typography.labelSmall, color = TextSecondary)
+                        Text(
+                            text = "+${formatCoins(projectedWin)} VC",
+                            fontFamily = JetBrainsMonoFontFamily,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 16.sp,
+                            color = NeonEmeraldBright
+                        )
+                    }
+                }
+            }
+
+            // Cancel + Confirm Place Bet Buttons
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Button(
+                    onClick = onDismiss,
+                    shape = RoundedCornerShape(50),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = ObsidianCardElevated,
+                        contentColor = TextPrimary
+                    ),
+                    modifier = Modifier
+                        .weight(0.4f)
+                        .height(50.dp)
+                ) {
+                    Text("Cancel", fontWeight = FontWeight.Bold)
+                }
+                Button(
+                    onClick = { onPlaceBet(totalBet) },
+                    enabled = !isSubmitting && availableCoins >= totalBet,
+                    shape = RoundedCornerShape(50),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = headerGradient.first(),
+                        contentColor = Color.White,
+                        disabledContainerColor = ObsidianCardElevated
+                    ),
+                    modifier = Modifier
+                        .weight(0.6f)
+                        .height(50.dp)
+                        .testTag("quick_bet_confirm_button")
+                ) {
+                    Text(
+                        text = if (availableCoins < totalBet) "Low Balance" else "Place Bet • ${formatCoins(totalBet)} VC",
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun WinGoColorChoiceButton(
     color: PredictionColor,
@@ -830,7 +1315,6 @@ private fun WinGoColorChoiceButton(
         animationSpec = spring(dampingRatio = 0.65f, stiffness = 420f),
         label = "wingo_color_scale"
     )
-    // Signature asymmetric WinGo corners matching Screenshot #1
     val shape = when (color) {
         PredictionColor.GREEN -> RoundedCornerShape(topStart = 4.dp, topEnd = 16.dp, bottomStart = 16.dp, bottomEnd = 4.dp)
         PredictionColor.VIOLET -> RoundedCornerShape(10.dp)
@@ -1010,8 +1494,8 @@ private fun ResultBannerCard(
                     Text(
                         text = when {
                             banner.userPredicted && banner.didWin -> "You Won +${formatCoins(banner.rewardCoins)} VC!"
-                            banner.userPredicted -> "Round Settled • ${banner.winningColor.displayName}"
-                            else -> "Result Declared • ${banner.winningColor.displayName}"
+                            banner.userPredicted -> "Round Settled • #${banner.resultDigit} (${digitBigSmallLabel(banner.resultDigit)})"
+                            else -> "Result Declared • #${banner.resultDigit} (${banner.winningColor.displayName})"
                         },
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold,
@@ -1058,7 +1542,29 @@ fun PredictionRowCard(prediction: PredictionRecord) {
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 modifier = Modifier.weight(1f)
             ) {
-                ColorOrbBadge(color = selected, size = 34.dp)
+                if (prediction.betType == "NUMBER" && prediction.selectedDigit != null) {
+                    WinGoNumberBall(digit = prediction.selectedDigit, size = 34.dp)
+                } else if (prediction.betType == "SIZE") {
+                    val isBig = prediction.selectedSize != "SMALL"
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .size(34.dp)
+                            .clip(CircleShape)
+                            .background(if (isBig) AmberOrangeMid else SMALL_BLUE_DEEP)
+                    ) {
+                        Text(
+                            text = if (isBig) "B" else "S",
+                            fontFamily = JetBrainsMonoFontFamily,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 14.sp,
+                            color = Color.White
+                        )
+                    }
+                } else {
+                    ColorOrbBadge(color = selected, size = 34.dp)
+                }
+
                 Column {
                     Text(
                         text = "${GameMode.fromId(prediction.modeId).shortLabel.uppercase()} • ${prediction.periodId}",
@@ -1069,8 +1575,12 @@ fun PredictionRowCard(prediction: PredictionRecord) {
                     )
                     Text(
                         text = buildString {
-                            append("Picked ${selected.displayName} (${formatCoins(prediction.stakeCoins)} VC)")
-                            if (winning != null) append(" • Result: ${winning.displayName}")
+                            append("Bet: ${prediction.displayPickLabel} (${formatCoins(prediction.stakeCoins)} VC)")
+                            if (prediction.winningDigit != null) {
+                                append(" • Result: #${prediction.winningDigit} (${digitBigSmallLabel(prediction.winningDigit)})")
+                            } else if (winning != null) {
+                                append(" • Result: ${winning.displayName}")
+                            }
                         },
                         style = MaterialTheme.typography.bodySmall,
                         color = TextSecondary

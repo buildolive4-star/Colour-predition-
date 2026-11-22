@@ -14,6 +14,7 @@ import com.example.data.PredictionRecord
 import com.example.data.UserNotification
 import com.example.data.UserProfile
 import com.example.data.VirtualVoucherEntity
+import com.example.data.WalletRequestEntity
 import com.example.data.WalletTransaction
 import com.example.domain.ActiveRoundSnapshot
 import com.example.domain.ColorPredictionEngine
@@ -21,6 +22,7 @@ import com.example.domain.GameMode
 import com.example.domain.PredictionColor
 import com.example.domain.UiState
 import com.example.domain.VerifiableRoundOutcome
+import com.example.domain.WinGoBetTarget
 import com.google.firebase.firestore.FirebaseFirestoreException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -169,10 +171,30 @@ class ChromaPulseViewModel(
             initialValue = emptyList()
         )
 
+    val userWalletRequestsState: StateFlow<List<WalletRequestEntity>> =
+        repository.observeUserWalletRequests(currentUserId)
+            .catchFirestoreError(emptyList())
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+                initialValue = emptyList()
+            )
+
     val adminLogsState: StateFlow<List<AdminAuditLogEntity>> = adminRoleState
         .flatMapLatest { role ->
             if (role == AdminAccessRole.NONE) flowOf(emptyList())
             else repository.observeAdminLogs().catchFirestoreError(emptyList())
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+            initialValue = emptyList()
+        )
+
+    val adminWalletRequestsState: StateFlow<List<WalletRequestEntity>> = adminRoleState
+        .flatMapLatest { role ->
+            if (role == AdminAccessRole.NONE) flowOf(emptyList())
+            else repository.observeAllWalletRequestsForAdmin().catchFirestoreError(emptyList())
         }
         .stateIn(
             scope = viewModelScope,
@@ -305,38 +327,69 @@ class ChromaPulseViewModel(
     }
 
     private fun settleDuePredictions(predictions: List<PredictionRecord>, nowMs: Long) {
-        predictions.filter { it.status == "PENDING" }.forEach { pred ->
-            val mode = GameMode.fromId(pred.modeId)
-            val endMs = ColorPredictionEngine.parsePeriodEndTimeMs(mode, pred.periodId) ?: return@forEach
-            if (nowMs >= endMs) {
+        val dueByPeriod = predictions
+            .filter { it.status == "PENDING" }
+            .filter { pred ->
+                val mode = GameMode.fromId(pred.modeId)
+                val endMs = ColorPredictionEngine.parsePeriodEndTimeMs(mode, pred.periodId) ?: return@filter false
+                nowMs >= endMs
+            }
+            .groupBy { "${it.modeId}_${it.periodId}" }
+
+        dueByPeriod.forEach { (_, periodBets) ->
+            val firstPred = periodBets.firstOrNull() ?: return@forEach
+            val mode = GameMode.fromId(firstPred.modeId)
+            val endMs = ColorPredictionEngine.parsePeriodEndTimeMs(mode, firstPred.periodId) ?: return@forEach
+            val toSettle = periodBets.filter { pred ->
                 val key = pred.id.ifBlank { "${mode.id}_${pred.periodId}" }
-                if (settlingIds.add(key)) {
-                    viewModelScope.launch {
-                        val startMs = endMs - mode.durationMs
-                        val outcome = ColorPredictionEngine.generateVerifiableOutcomeForPeriod(
-                            mode = mode,
-                            periodId = pred.periodId,
-                            startTimeMs = startMs,
-                            endTimeMs = endMs
-                        )
-                        publishRoundIfNeeded(outcome)
-                        repository.settlePrediction(pred, outcome)
-                            .onSuccess { (reward, effectiveOutcome) ->
-                                _latestBanner.value = RoundSettlementBanner(
-                                    mode = mode,
-                                    periodId = pred.periodId,
-                                    winningColor = effectiveOutcome.winningColor,
-                                    resultDigit = effectiveOutcome.resultDigit,
-                                    resultHash = effectiveOutcome.resultHash,
-                                    userPredicted = true,
-                                    didWin = reward > 0L,
-                                    rewardCoins = reward
-                                )
-                            }
-                            .onFailure {
-                                settlingIds.remove(key)
-                            }
+                settlingIds.add(key)
+            }
+            if (toSettle.isEmpty()) return@forEach
+
+            viewModelScope.launch {
+                val startMs = endMs - mode.durationMs
+                val outcome = ColorPredictionEngine.generateVerifiableOutcomeForPeriod(
+                    mode = mode,
+                    periodId = firstPred.periodId,
+                    startTimeMs = startMs,
+                    endTimeMs = endMs
+                )
+                publishRoundIfNeeded(outcome)
+
+                var totalReward = 0L
+                var finalOutcome = outcome
+                var anySuccess = false
+
+                for (pred in toSettle) {
+                    val key = pred.id.ifBlank { "${mode.id}_${pred.periodId}" }
+                    repository.settlePrediction(pred, outcome)
+                        .onSuccess { (reward, effectiveOutcome) ->
+                            totalReward += reward
+                            finalOutcome = effectiveOutcome
+                            anySuccess = true
+                        }
+                        .onFailure {
+                            settlingIds.remove(key)
+                        }
+                }
+
+                if (anySuccess) {
+                    val existing = _latestBanner.value
+                    val combinedReward = if (existing != null && existing.mode == mode && existing.periodId == firstPred.periodId) {
+                        existing.rewardCoins + totalReward
+                    } else {
+                        totalReward
                     }
+                    _latestBanner.value = RoundSettlementBanner(
+                        mode = mode,
+                        periodId = firstPred.periodId,
+                        winningColor = finalOutcome.winningColor,
+                        resultDigit = finalOutcome.resultDigit,
+                        resultHash = finalOutcome.resultHash,
+                        userPredicted = true,
+                        didWin = combinedReward > 0L,
+                        rewardCoins = combinedReward
+                    )
                 }
             }
         }
@@ -369,10 +422,10 @@ class ChromaPulseViewModel(
         _latestBanner.value = null
     }
 
-    fun submitPrediction(mode: GameMode, color: PredictionColor, stakeCoins: Long) {
+    fun submitPrediction(mode: GameMode, target: WinGoBetTarget, stakeCoins: Long) {
         val active = _activeRounds.value[mode] ?: return
         if (!active.canPredict) {
-            _snackbarMessages.tryEmit("Round is locked! Wait for the next period to open.")
+            _snackbarMessages.tryEmit("Round closed! Wait for the next period to open.")
             return
         }
         if (_isSubmittingPrediction.value) return
@@ -382,12 +435,12 @@ class ChromaPulseViewModel(
             repository.submitPrediction(
                 mode = mode,
                 periodId = active.periodId,
-                selectedColor = color,
+                target = target,
                 stakeCoins = stakeCoins
             ).onSuccess {
-                _snackbarMessages.tryEmit("Locked $stakeCoins VC on ${color.displayName} (${active.periodId})")
+                _snackbarMessages.tryEmit("Bet Successful! $stakeCoins VC on ${target.label}")
             }.onFailure { err ->
-                _snackbarMessages.tryEmit(err.localizedMessage ?: "Unable to lock prediction.")
+                _snackbarMessages.tryEmit(err.localizedMessage ?: "Unable to place bet.")
             }
             _isSubmittingPrediction.value = false
         }
@@ -517,6 +570,78 @@ class ChromaPulseViewModel(
                 }
                 .onFailure { err ->
                     _snackbarMessages.tryEmit(err.localizedMessage ?: "Failed to create QR voucher.")
+                }
+        }
+    }
+
+    fun submitDepositRequest(amountCoins: Long, utrReference: String, onDone: (Boolean) -> Unit = {}) {
+        viewModelScope.launch {
+            repository.submitDepositRequest(amountCoins, utrReference)
+                .onSuccess {
+                    _snackbarMessages.tryEmit("Deposit request submitted! Admin will credit $amountCoins VC after verifying QR payment.")
+                    onDone(true)
+                }
+                .onFailure { err ->
+                    _snackbarMessages.tryEmit(err.localizedMessage ?: "Failed to submit deposit request.")
+                    onDone(false)
+                }
+        }
+    }
+
+    fun submitWithdrawalRequest(
+        amountCoins: Long,
+        paymentMethod: String,
+        paymentDetails: String,
+        onDone: (Boolean) -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            repository.submitWithdrawalRequest(amountCoins, paymentMethod, paymentDetails)
+                .onSuccess {
+                    _snackbarMessages.tryEmit("Withdrawal request submitted for $amountCoins VC! Admin will verify shortly.")
+                    onDone(true)
+                }
+                .onFailure { err ->
+                    _snackbarMessages.tryEmit(err.localizedMessage ?: "Failed to submit withdrawal request.")
+                    onDone(false)
+                }
+        }
+    }
+
+    fun adminApproveDepositRequest(requestId: String, note: String = "") {
+        val actorRole = if (isSuperAdmin) "SUPER_ADMIN" else "CO_ADMIN"
+        viewModelScope.launch {
+            repository.adminApproveDepositRequest(requestId, note, actorRole)
+                .onSuccess { credited ->
+                    _snackbarMessages.tryEmit("Deposit Approved! +$credited VC credited to player.")
+                }
+                .onFailure { err ->
+                    _snackbarMessages.tryEmit(err.localizedMessage ?: "Failed to approve deposit.")
+                }
+        }
+    }
+
+    fun adminVerifyWithdrawalRequest(requestId: String, note: String = "") {
+        val actorRole = if (isSuperAdmin) "SUPER_ADMIN" else "CO_ADMIN"
+        viewModelScope.launch {
+            repository.adminVerifyWithdrawalRequest(requestId, note, actorRole)
+                .onSuccess {
+                    _snackbarMessages.tryEmit("Withdrawal marked VERIFIED!")
+                }
+                .onFailure { err ->
+                    _snackbarMessages.tryEmit(err.localizedMessage ?: "Failed to verify withdrawal.")
+                }
+        }
+    }
+
+    fun adminRejectWalletRequest(requestId: String, reason: String = "Details mismatch") {
+        val actorRole = if (isSuperAdmin) "SUPER_ADMIN" else "CO_ADMIN"
+        viewModelScope.launch {
+            repository.adminRejectWalletRequest(requestId, reason, actorRole)
+                .onSuccess {
+                    _snackbarMessages.tryEmit("Request declined (withdrawal coins refunded if applicable).")
+                }
+                .onFailure { err ->
+                    _snackbarMessages.tryEmit(err.localizedMessage ?: "Failed to decline request.")
                 }
         }
     }

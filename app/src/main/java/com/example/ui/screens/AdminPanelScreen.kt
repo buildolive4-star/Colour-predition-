@@ -74,6 +74,7 @@ import com.example.data.CoAdminGrantEntity
 import com.example.data.CoAdminInviteEntity
 import com.example.data.UserProfile
 import com.example.data.VirtualVoucherEntity
+import com.example.data.WalletRequestEntity
 import com.example.security.PasswordHasher
 import com.example.ui.components.QrMatrixCanvas
 import com.example.ui.components.formatCoins
@@ -111,6 +112,7 @@ fun AdminPanelScreen(
     adminLogs: List<AdminAuditLogEntity>,
     coAdminInvites: List<CoAdminInviteEntity>,
     coAdminGrants: List<CoAdminGrantEntity>,
+    walletRequests: List<WalletRequestEntity>,
     lastCreatedPassword: String?,
     totalPredictionsCount: Int,
     onUnlockWithPassword: (String, (Boolean, String?) -> Unit) -> Unit,
@@ -119,6 +121,9 @@ fun AdminPanelScreen(
     onToggleCoAdminInvite: (String, Boolean, String) -> Unit,
     onDeleteCoAdminInvite: (String, String) -> Unit,
     onRevokeCoAdminUser: (String, String) -> Unit,
+    onApproveDeposit: (String, String) -> Unit,
+    onVerifyWithdrawal: (String, String) -> Unit,
+    onRejectWalletRequest: (String, String) -> Unit,
     onSaveConfig: (AppConfigEntity, String) -> Unit,
     onAdjustUserCoins: (String, Long, String) -> Unit,
     onCreateVoucher: (Long, String) -> Unit,
@@ -166,9 +171,13 @@ fun AdminPanelScreen(
         return
     }
 
-    val tabs = remember(isSuperAdmin) {
-        if (isSuperAdmin) listOf("Overview", "Games", "Users", "QR & Logs", "Co-Admins")
-        else listOf("Overview", "Games", "Users", "QR & Logs")
+    val pendingRequestsCount = remember(walletRequests) {
+        walletRequests.count { it.status == "PENDING" }
+    }
+    val tabs = remember(isSuperAdmin, pendingRequestsCount) {
+        val reqLabel = if (pendingRequestsCount > 0) "Requests ($pendingRequestsCount)" else "Requests"
+        if (isSuperAdmin) listOf("Overview", reqLabel, "Games", "Users", "QR & Logs", "Co-Admins")
+        else listOf("Overview", reqLabel, "Games", "Users", "QR & Logs")
     }
     if (selectedTab >= tabs.size) selectedTab = 0
 
@@ -304,9 +313,9 @@ fun AdminPanelScreen(
                                 modifier = Modifier.weight(1f)
                             )
                             AdminKpiCard(
-                                title = "CLOUD VOUCHERS",
-                                value = "${vouchers.count { !it.redeemed }} Active",
-                                accent = ElectricVioletBright,
+                                title = "PENDING REQUESTS",
+                                value = "$pendingRequestsCount Pending",
+                                accent = if (pendingRequestsCount > 0) RubyRedBright else NeonEmeraldBright,
                                 modifier = Modifier.weight(1f)
                             )
                         }
@@ -377,6 +386,247 @@ fun AdminPanelScreen(
             }
 
             1 -> {
+                // Deposit & Withdrawal Requests Verification Queue
+                item {
+                    var reqFilter by remember { mutableIntStateOf(0) } // 0=Pending, 1=Deposits, 2=Withdrawals, 3=All
+                    val filteredRequests = remember(walletRequests, reqFilter) {
+                        when (reqFilter) {
+                            0 -> walletRequests.filter { it.status == "PENDING" }
+                            1 -> walletRequests.filter { it.requestType == "DEPOSIT" }
+                            2 -> walletRequests.filter { it.requestType == "WITHDRAWAL" }
+                            else -> walletRequests
+                        }
+                    }
+                    val clipboard = LocalClipboardManager.current
+
+                    Column(
+                        modifier = Modifier.padding(horizontal = 14.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            text = "Deposit & Withdrawal Verification",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = TextPrimary
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            listOf("Pending ($pendingRequestsCount)", "Deposits", "Withdrawals", "All").forEachIndexed { idx, label ->
+                                val active = reqFilter == idx
+                                Surface(
+                                    onClick = { reqFilter = idx },
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = if (active) AmberOrangeMid else ObsidianCard,
+                                    border = BorderStroke(1.dp, if (active) AmberGoldTop else ObsidianBorder),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text(
+                                        text = label,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (active) Color.White else TextSecondary,
+                                        textAlign = TextAlign.Center,
+                                        modifier = Modifier.padding(vertical = 8.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        if (filteredRequests.isEmpty()) {
+                            Surface(
+                                shape = RoundedCornerShape(16.dp),
+                                color = ObsidianCard,
+                                border = BorderStroke(1.dp, ObsidianBorder),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = "No matching deposit or withdrawal requests right now.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = TextSecondary,
+                                    modifier = Modifier.padding(16.dp)
+                                )
+                            }
+                        } else {
+                            filteredRequests.forEach { req ->
+                                val isDeposit = req.requestType == "DEPOSIT"
+                                val isPending = req.status == "PENDING"
+                                val accent = when (req.status) {
+                                    "APPROVED", "VERIFIED" -> NeonEmeraldBright
+                                    "REJECTED" -> RubyRedBright
+                                    else -> AmberGoldTop
+                                }
+
+                                Surface(
+                                    shape = RoundedCornerShape(16.dp),
+                                    color = ObsidianCard,
+                                    border = BorderStroke(1.2.dp, accent.copy(alpha = 0.55f)),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(14.dp),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                            ) {
+                                                Surface(
+                                                    shape = RoundedCornerShape(6.dp),
+                                                    color = if (isDeposit) NeonEmerald.copy(alpha = 0.2f) else RubyRed.copy(alpha = 0.22f)
+                                                ) {
+                                                    Text(
+                                                        text = if (isDeposit) "DEPOSIT" else "WITHDRAW",
+                                                        fontFamily = JetBrainsMonoFontFamily,
+                                                        fontSize = 10.sp,
+                                                        fontWeight = FontWeight.ExtraBold,
+                                                        color = if (isDeposit) NeonEmeraldBright else RubyRedBright,
+                                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                                                    )
+                                                }
+                                                Text(
+                                                    text = "${formatCoins(req.amountCoins)} VC",
+                                                    fontFamily = JetBrainsMonoFontFamily,
+                                                    fontWeight = FontWeight.ExtraBold,
+                                                    fontSize = 16.sp,
+                                                    color = CoinGoldSoft
+                                                )
+                                            }
+                                            Surface(
+                                                shape = RoundedCornerShape(6.dp),
+                                                color = accent.copy(alpha = 0.18f)
+                                            ) {
+                                                Text(
+                                                    text = req.status,
+                                                    fontFamily = JetBrainsMonoFontFamily,
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = accent,
+                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                                )
+                                            }
+                                        }
+
+                                        Text(
+                                            text = "${req.userName} • ${req.publicUserId}",
+                                            style = MaterialTheme.typography.titleSmall,
+                                            color = TextPrimary
+                                        )
+                                        Text(
+                                            text = "${req.userEmail} • ${formatTimestamp(req.createdAtMs)}",
+                                            fontFamily = JetBrainsMonoFontFamily,
+                                            fontSize = 10.sp,
+                                            color = TextSecondary
+                                        )
+
+                                        // Copyable UTR / UPI ID / Paytm Number box
+                                        Surface(
+                                            onClick = { clipboard.setText(AnnotatedString(req.paymentDetails)) },
+                                            shape = RoundedCornerShape(10.dp),
+                                            color = ObsidianCanvas,
+                                            border = BorderStroke(1.dp, ObsidianBorder),
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(horizontal = 12.dp, vertical = 9.dp),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text(
+                                                        text = when (req.paymentMethod) {
+                                                            "QR_UPI" -> "QR Payment UTR Reference"
+                                                            "PAYTM" -> "User Paytm Number"
+                                                            else -> "User UPI ID"
+                                                        },
+                                                        fontSize = 10.sp,
+                                                        color = TextSecondary
+                                                    )
+                                                    Text(
+                                                        text = req.paymentDetails,
+                                                        fontFamily = JetBrainsMonoFontFamily,
+                                                        fontWeight = FontWeight.Bold,
+                                                        fontSize = 13.sp,
+                                                        color = CyanPulse
+                                                    )
+                                                }
+                                                Icon(
+                                                    imageVector = Icons.Filled.ContentCopy,
+                                                    contentDescription = "Copy details",
+                                                    tint = AmberGoldTop,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            }
+                                        }
+
+                                        if (isPending) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            ) {
+                                                Button(
+                                                    onClick = {
+                                                        if (isDeposit) {
+                                                            onApproveDeposit(req.id, "QR payment verified & coins credited")
+                                                        } else {
+                                                            onVerifyWithdrawal(req.id, "Withdrawal verified & paid via ${req.paymentMethod}")
+                                                        }
+                                                    },
+                                                    shape = RoundedCornerShape(12.dp),
+                                                    colors = ButtonDefaults.buttonColors(containerColor = NeonEmerald, contentColor = Color.White),
+                                                    modifier = Modifier
+                                                        .weight(1.3f)
+                                                        .testTag("admin_approve_req_${req.id}")
+                                                ) {
+                                                    Text(
+                                                        text = if (isDeposit) "Approve & Add Coins" else "Verify & Mark Paid",
+                                                        fontWeight = FontWeight.ExtraBold,
+                                                        fontSize = 12.sp
+                                                    )
+                                                }
+                                                OutlinedButton(
+                                                    onClick = {
+                                                        val msg = if (isDeposit) "QR payment not verified" else "Declined & coins refunded"
+                                                        onRejectWalletRequest(req.id, msg)
+                                                    },
+                                                    shape = RoundedCornerShape(12.dp),
+                                                    border = BorderStroke(1.dp, RubyRed),
+                                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = RubyRedBright),
+                                                    modifier = Modifier
+                                                        .weight(0.9f)
+                                                        .testTag("admin_reject_req_${req.id}")
+                                                ) {
+                                                    Text(
+                                                        text = if (isDeposit) "Reject" else "Refund",
+                                                        fontWeight = FontWeight.Bold,
+                                                        fontSize = 12.sp
+                                                    )
+                                                }
+                                            }
+                                        } else if (!req.adminNote.isNullOrBlank()) {
+                                            Text(
+                                                text = "Processed: ${req.adminNote}",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = TextSecondary
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            2 -> {
                 // Game Modes Toggle, Multipliers & Engine Mode
                 item {
                     var rgMult by remember(appConfig.redGreenMultiplier) { mutableDoubleStateOf(appConfig.redGreenMultiplier) }
@@ -520,7 +770,7 @@ fun AdminPanelScreen(
                 }
             }
 
-            2 -> {
+            3 -> {
                 // Cloud Users & Multi-Player Wallet Manager
                 item {
                     val playersList = allUsers.ifEmpty { listOfNotNull(currentUserProfile) }
@@ -638,8 +888,8 @@ fun AdminPanelScreen(
                 }
             }
 
-            3 -> {
-                // Cloud Counter QR + Gift Voucher QR Generator + Audit Logs
+            4 -> {
+                // Cloud Deposit QR + Gift Voucher QR Generator + Audit Logs
                 item {
                     var qrLabelDraft by remember(appConfig.adminQrLabel) { mutableStateOf(appConfig.adminQrLabel) }
                     var qrPayloadDraft by remember(appConfig.adminQrPayload) { mutableStateOf(appConfig.adminQrPayload) }
@@ -664,13 +914,16 @@ fun AdminPanelScreen(
                                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
                                     Icon(Icons.Filled.QrCode2, contentDescription = null, tint = AmberGoldTop)
-                                    Text("Global Demo Counter QR Settings", style = MaterialTheme.typography.titleMedium, color = TextPrimary)
+                                    Text("Global Deposit QR & UPI Settings", style = MaterialTheme.typography.titleMedium, color = TextPrimary)
                                 }
-                                QrMatrixCanvas(payload = qrPayloadDraft.ifBlank { "CHROMAPULSE:DEMO" }, size = 148.dp)
+                                QrMatrixCanvas(
+                                    payload = buildScannableQrPayload(qrPayloadDraft, qrLabelDraft),
+                                    size = 152.dp
+                                )
                                 OutlinedTextField(
                                     value = qrLabelDraft,
                                     onValueChange = { if (it.length <= 80) qrLabelDraft = it },
-                                    label = { Text("QR Title") },
+                                    label = { Text("Deposit Counter Name") },
                                     singleLine = true,
                                     colors = OutlinedTextFieldDefaults.colors(
                                         focusedBorderColor = AmberGoldTop,
@@ -683,7 +936,7 @@ fun AdminPanelScreen(
                                 OutlinedTextField(
                                     value = qrPayloadDraft,
                                     onValueChange = { if (it.length <= 200) qrPayloadDraft = it },
-                                    label = { Text("Virtual Demo QR Data") },
+                                    label = { Text("Admin UPI ID (e.g. name@ybl) or QR Link") },
                                     singleLine = true,
                                     colors = OutlinedTextFieldDefaults.colors(
                                         focusedBorderColor = AmberGoldTop,
@@ -700,14 +953,14 @@ fun AdminPanelScreen(
                                                 adminQrLabel = qrLabelDraft.trim().ifBlank { "ChromaPulse Counter" },
                                                 adminQrPayload = qrPayloadDraft.trim().ifBlank { "CHROMAPULSE:DEMO" }
                                             ),
-                                            "Updated global Demo Counter QR"
+                                            "Updated global Deposit QR / UPI ID"
                                         )
                                     },
                                     shape = RoundedCornerShape(50),
                                     colors = ButtonDefaults.buttonColors(containerColor = AmberOrangeMid, contentColor = Color.White),
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    Text("Sync Counter QR to All Users", fontWeight = FontWeight.Bold)
+                                    Text("Sync Deposit QR to All Users", fontWeight = FontWeight.Bold)
                                 }
                             }
                         }
@@ -782,7 +1035,7 @@ fun AdminPanelScreen(
                 }
             }
 
-            4 -> {
+            5 -> {
                 // Main Admin ONLY: Create & Manage Co-Admin Passwords & Active Co-Admins
                 item {
                     val clipboard = LocalClipboardManager.current

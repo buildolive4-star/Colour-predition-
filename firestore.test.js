@@ -344,3 +344,123 @@ test("Player voucher redemption and Kotlin-aligned filtered queries succeed", as
   );
   await assertFails(bobDb.collection("game_rounds").get());
 });
+
+test("Multi-bet predictions (Color, Number, Big/Small) and Deposit/Withdrawal wallet_requests enforce security rules", async () => {
+  const superDb = testEnv
+    .authenticatedContext(SUPER_ADMIN_UID, {
+      email: SUPER_ADMIN_EMAIL,
+      email_verified: true,
+    })
+    .firestore();
+  const aliceDb = testEnv
+    .authenticatedContext(ALICE_UID, {
+      email: "alice@example.com",
+      email_verified: true,
+    })
+    .firestore();
+  const bobDb = testEnv
+    .authenticatedContext(BOB_UID, {
+      email: "bob@example.com",
+      email_verified: true,
+    })
+    .firestore();
+
+  const ts = nowPast(4000);
+
+  // Alice places multiple bets in the same round: Number 7 + Big + Green
+  await assertSucceeds(
+    aliceDb.collection("users").doc(ALICE_UID).collection("predictions").doc("mode_30s_20261122-30S-00001_1").set({
+      userId: ALICE_UID,
+      modeId: "mode_30s",
+      periodId: "20261122-30S-00001",
+      betType: "NUMBER",
+      betLabel: "Number 7",
+      selectedColor: "GREEN",
+      selectedDigit: 7,
+      stakeCoins: 100,
+      status: "PENDING",
+      rewardCoins: 0,
+      createdAt: ts,
+      updatedAt: ts,
+    })
+  );
+  await assertSucceeds(
+    aliceDb.collection("users").doc(ALICE_UID).collection("predictions").doc("mode_30s_20261122-30S-00001_2").set({
+      userId: ALICE_UID,
+      modeId: "mode_30s",
+      periodId: "20261122-30S-00001",
+      betType: "SIZE",
+      betLabel: "Big (5-9)",
+      selectedColor: "GREEN",
+      selectedSize: "BIG",
+      stakeCoins: 200,
+      status: "PENDING",
+      rewardCoins: 0,
+      createdAt: ts,
+      updatedAt: ts,
+    })
+  );
+
+  // Alice submits a PENDING Deposit Request via Admin QR
+  await assertSucceeds(
+    aliceDb.collection("wallet_requests").doc("dep_alice_001").set({
+      userId: ALICE_UID,
+      userName: "Alice Star",
+      userEmail: "alice@example.com",
+      publicUserId: "CP-111111",
+      requestType: "DEPOSIT",
+      amountCoins: 500,
+      paymentMethod: "QR_UPI",
+      paymentDetails: "UTR412345678901",
+      status: "PENDING",
+      createdAt: ts,
+      updatedAt: ts,
+    })
+  );
+
+  // Alice CANNOT create a pre-approved deposit request
+  await assertFails(
+    aliceDb.collection("wallet_requests").doc("dep_alice_hack").set({
+      userId: ALICE_UID,
+      userName: "Alice Star",
+      userEmail: "alice@example.com",
+      publicUserId: "CP-111111",
+      requestType: "DEPOSIT",
+      amountCoins: 50000,
+      paymentMethod: "QR_UPI",
+      paymentDetails: "FAKEUTR123",
+      status: "APPROVED",
+      createdAt: ts,
+      updatedAt: ts,
+    })
+  );
+
+  // Alice CANNOT self-approve her own request
+  await assertFails(
+    aliceDb.collection("wallet_requests").doc("dep_alice_001").update({
+      status: "APPROVED",
+      updatedAt: nowPast(1000),
+    })
+  );
+
+  // Bob CANNOT read Alice's deposit request or list all requests
+  await assertFails(bobDb.collection("wallet_requests").doc("dep_alice_001").get());
+  await assertFails(bobDb.collection("wallet_requests").get());
+
+  // Alice CAN list her own requests using Kotlin-aligned whereEqualTo("userId", uid)
+  await assertSucceeds(
+    aliceDb.collection("wallet_requests").where("userId", "==", ALICE_UID).get()
+  );
+
+  // Super Admin CAN list all requests and approve Alice's deposit
+  await assertSucceeds(superDb.collection("wallet_requests").get());
+  await assertSucceeds(
+    superDb.collection("wallet_requests").doc("dep_alice_001").update({
+      status: "APPROVED",
+      adminNote: "QR UTR verified & credited",
+      processedByEmail: SUPER_ADMIN_EMAIL,
+      updatedAt: nowPast(1000),
+    })
+  );
+});
+

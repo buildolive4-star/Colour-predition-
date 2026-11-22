@@ -71,6 +71,7 @@ import com.example.domain.UiState
 import com.example.ui.components.QrCenterScreen
 import com.example.ui.screens.AdminPanelScreen
 import com.example.ui.screens.AuthScreen
+import com.example.ui.screens.DepositModalSheet
 import com.example.ui.screens.GameArenaScreen
 import com.example.ui.screens.HistoryScreen
 import com.example.ui.screens.HomeScreen
@@ -79,6 +80,7 @@ import com.example.ui.screens.MiniGamesScreen
 import com.example.ui.screens.NotificationsSheet
 import com.example.ui.screens.ProfileScreen
 import com.example.ui.screens.VirtualWalletSheet
+import com.example.ui.screens.WithdrawModalSheet
 import com.example.ui.theme.AmberGoldTop
 import com.example.ui.theme.AmberOrangeMid
 import com.example.ui.theme.ChromaPulseTheme
@@ -188,6 +190,8 @@ private fun AuthenticatedChromaPulseApp(currentUserId: String) {
     val adminLogs by viewModel.adminLogsState.collectAsStateWithLifecycle()
     val coAdminInvites by viewModel.coAdminInvitesState.collectAsStateWithLifecycle()
     val coAdminGrants by viewModel.allCoAdminGrantsState.collectAsStateWithLifecycle()
+    val userWalletRequests by viewModel.userWalletRequestsState.collectAsStateWithLifecycle()
+    val adminWalletRequests by viewModel.adminWalletRequestsState.collectAsStateWithLifecycle()
     val lastCreatedPassword by viewModel.lastCreatedCoAdminPassword.collectAsStateWithLifecycle()
     val isVerifyingAdminPass by viewModel.isVerifyingAdminPass.collectAsStateWithLifecycle()
 
@@ -212,6 +216,8 @@ private fun AuthenticatedChromaPulseApp(currentUserId: String) {
 
     val snackbarHostState = remember { SnackbarHostState() }
     var showWalletSheet by remember { mutableStateOf(false) }
+    var showDepositSheet by remember { mutableStateOf(false) }
+    var showWithdrawSheet by remember { mutableStateOf(false) }
     var showNotificationsSheet by remember { mutableStateOf(false) }
     var selectedMiniGameTab by remember { mutableIntStateOf(0) }
 
@@ -364,11 +370,11 @@ private fun AuthenticatedChromaPulseApp(currentUserId: String) {
                                 isSubmitting = isSubmitting,
                                 isClaimingBonus = isClaimingBonus,
                                 onSelectMode = { viewModel.selectMode(it) },
-                                onSubmitPrediction = { mode, color, stake ->
-                                    viewModel.submitPrediction(mode, color, stake)
+                                onSubmitPrediction = { mode, target, stake ->
+                                    viewModel.submitPrediction(mode, target, stake)
                                 },
-                                onClaimDailyBonus = { viewModel.claimDailyBonus() },
-                                onClaimDemoRefill = { viewModel.claimDemoRefill() },
+                                onOpenDeposit = { showDepositSheet = true },
+                                onOpenWithdraw = { showWithdrawSheet = true },
                                 onDismissBanner = { viewModel.dismissBanner() },
                                 onOpenWallet = { showWalletSheet = true },
                                 onBack = { navigateTopLevel(ROUTE_HOME) }
@@ -442,6 +448,7 @@ private fun AuthenticatedChromaPulseApp(currentUserId: String) {
                                 adminLogs = adminLogs,
                                 coAdminInvites = coAdminInvites,
                                 coAdminGrants = coAdminGrants,
+                                walletRequests = adminWalletRequests,
                                 lastCreatedPassword = lastCreatedPassword,
                                 totalPredictionsCount = predictions.size,
                                 onUnlockWithPassword = { pass, callback ->
@@ -459,6 +466,15 @@ private fun AuthenticatedChromaPulseApp(currentUserId: String) {
                                 },
                                 onRevokeCoAdminUser = { targetUid, email ->
                                     viewModel.revokeCoAdminUser(targetUid, email)
+                                },
+                                onApproveDeposit = { reqId, note ->
+                                    viewModel.adminApproveDepositRequest(reqId, note)
+                                },
+                                onVerifyWithdrawal = { reqId, note ->
+                                    viewModel.adminVerifyWithdrawalRequest(reqId, note)
+                                },
+                                onRejectWalletRequest = { reqId, reason ->
+                                    viewModel.adminRejectWalletRequest(reqId, reason)
                                 },
                                 onSaveConfig = { updated, summary ->
                                     viewModel.adminSaveConfig(updated, summary)
@@ -482,9 +498,39 @@ private fun AuthenticatedChromaPulseApp(currentUserId: String) {
                 profile = profile,
                 transactions = transactions,
                 isClaimingBonus = isClaimingBonus,
+                onOpenDeposit = {
+                    showWalletSheet = false
+                    showDepositSheet = true
+                },
+                onOpenWithdraw = {
+                    showWalletSheet = false
+                    showWithdrawSheet = true
+                },
                 onClaimDailyBonus = { viewModel.claimDailyBonus() },
                 onClaimDemoRefill = { viewModel.claimDemoRefill() },
                 onDismiss = { showWalletSheet = false }
+            )
+        }
+
+        if (showDepositSheet) {
+            DepositModalSheet(
+                appConfig = appConfig,
+                userRequests = userWalletRequests,
+                onSubmitDeposit = { amount, utrRef, onDone ->
+                    viewModel.submitDepositRequest(amount, utrRef, onDone)
+                },
+                onDismiss = { showDepositSheet = false }
+            )
+        }
+
+        if (showWithdrawSheet) {
+            WithdrawModalSheet(
+                profile = profile,
+                userRequests = userWalletRequests,
+                onSubmitWithdraw = { amount, method, details, onDone ->
+                    viewModel.submitWithdrawalRequest(amount, method, details, onDone)
+                },
+                onDismiss = { showWithdrawSheet = false }
             )
         }
 

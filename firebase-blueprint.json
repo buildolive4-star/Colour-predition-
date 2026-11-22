@@ -34,10 +34,15 @@
         "userId": { "type": "string" },
         "modeId": { "type": "string", "enum": ["mode_30s", "mode_60s", "mode_3m", "mode_5m"] },
         "periodId": { "type": "string" },
+        "betType": { "type": "string", "enum": ["COLOR", "NUMBER", "SIZE"] },
+        "betLabel": { "type": "string" },
         "selectedColor": { "type": "string", "enum": ["RED", "GREEN", "VIOLET"] },
+        "selectedDigit": { "type": "number" },
+        "selectedSize": { "type": "string", "enum": ["BIG", "SMALL"] },
         "stakeCoins": { "type": "number" },
         "status": { "type": "string", "enum": ["PENDING", "WON", "LOST"] },
         "winningColor": { "type": "string", "enum": ["RED", "GREEN", "VIOLET"] },
+        "winningDigit": { "type": "number" },
         "rewardCoins": { "type": "number" },
         "resultHash": { "type": "string" },
         "createdAt": { "type": "string", "format": "date-time" },
@@ -53,7 +58,7 @@
         "userId": { "type": "string" },
         "txType": {
           "type": "string",
-          "enum": ["WELCOME_BONUS", "DAILY_BONUS", "DEMO_REFILL", "PREDICTION_ENTRY", "PREDICTION_REWARD", "MINI_GAME_ENTRY", "MINI_GAME_REWARD", "QR_VOUCHER_REDEEM", "ADMIN_CREDIT", "ADMIN_DEBIT"]
+          "enum": ["WELCOME_BONUS", "DAILY_BONUS", "DEMO_REFILL", "PREDICTION_ENTRY", "PREDICTION_REWARD", "MINI_GAME_ENTRY", "MINI_GAME_REWARD", "QR_VOUCHER_REDEEM", "ADMIN_CREDIT", "ADMIN_DEBIT", "DEPOSIT_CREDIT", "WITHDRAWAL_REQUEST", "WITHDRAWAL_REFUND"]
         },
         "amount": { "type": "number" },
         "previousBalance": { "type": "number" },
@@ -196,6 +201,27 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["userId", "email", "displayName", "label", "inviteHash", "active", "createdAt", "updatedAt"]
+    },
+    "WalletRequest": {
+      "title": "WalletRequest",
+      "description": "User deposit (QR payment reference) or withdrawal (UPI ID / Paytm number) request verified by Admin.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "userEmail": { "type": "string" },
+        "publicUserId": { "type": "string" },
+        "requestType": { "type": "string", "enum": ["DEPOSIT", "WITHDRAWAL"] },
+        "amountCoins": { "type": "number" },
+        "paymentMethod": { "type": "string", "enum": ["QR_UPI", "UPI_ID", "PAYTM"] },
+        "paymentDetails": { "type": "string" },
+        "status": { "type": "string", "enum": ["PENDING", "APPROVED", "VERIFIED", "REJECTED"] },
+        "adminNote": { "type": "string" },
+        "processedByEmail": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "userName", "userEmail", "publicUserId", "requestType", "amountCoins", "paymentMethod", "paymentDetails", "status", "createdAt", "updatedAt"]
     }
   },
   "firestore": {
@@ -242,6 +268,10 @@
     "/co_admins/{uid}": {
       "schema": { "$ref": "#/entities/CoAdminGrant" },
       "description": "Active Co-Admin session grants bound to a valid inviteHash."
+    },
+    "/wallet_requests/{requestId}": {
+      "schema": { "$ref": "#/entities/WalletRequest" },
+      "description": "User deposit & withdrawal requests processed and verified by Main Admin or Co-Admin."
     }
   }
 }
