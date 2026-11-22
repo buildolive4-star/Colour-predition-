@@ -36,9 +36,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.GameRoundRecord
@@ -48,17 +51,20 @@ import com.example.domain.GameMode
 import com.example.domain.HistoryDateFilter
 import com.example.domain.PredictionColor
 import com.example.domain.VerifiableRoundOutcome
-import com.example.ui.components.ColorOrbBadge
 import com.example.ui.components.EmptyStatePanel
 import com.example.ui.components.RoundVerificationDialog
 import com.example.ui.components.VirtualDisclaimerBanner
+import com.example.ui.components.WinGoColorDots
+import com.example.ui.components.digitBigSmallLabel
 import com.example.ui.components.formatCoins
 import com.example.ui.components.formatEpochMs
 import com.example.ui.components.formatTimestamp
+import com.example.ui.theme.AmberGoldTop
+import com.example.ui.theme.AmberOrangeDeep
+import com.example.ui.theme.AmberOrangeMid
 import com.example.ui.theme.CoinGoldSoft
 import com.example.ui.theme.CyanPulse
 import com.example.ui.theme.ElectricViolet
-import com.example.ui.theme.ElectricVioletBright
 import com.example.ui.theme.JetBrainsMonoFontFamily
 import com.example.ui.theme.NeonEmerald
 import com.example.ui.theme.NeonEmeraldBright
@@ -169,19 +175,19 @@ fun HistoryScreen(
             }
         }
 
-        // Section Switcher
+        // Section Switcher (ShreeWin Sunset Amber active tab)
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                listOf("Rounds", "My Picks", "Ledger").forEachIndexed { idx, label ->
+                listOf("Game history", "My Picks", "Ledger").forEachIndexed { idx, label ->
                     val active = selectedSection == idx
                     Surface(
                         onClick = { selectedSection = idx },
                         shape = RoundedCornerShape(14.dp),
-                        color = if (active) ElectricViolet else ObsidianCard,
-                        border = BorderStroke(1.dp, if (active) ElectricVioletBright else ObsidianBorder),
+                        color = if (active) AmberOrangeMid else ObsidianCard,
+                        border = BorderStroke(1.dp, if (active) AmberGoldTop else ObsidianBorder),
                         modifier = Modifier
                             .weight(1f)
                             .testTag("history_tab_$idx")
@@ -195,6 +201,7 @@ fun HistoryScreen(
                             Text(
                                 text = label,
                                 style = MaterialTheme.typography.labelLarge,
+                                fontWeight = if (active) FontWeight.ExtraBold else FontWeight.Medium,
                                 color = if (active) Color.White else TextSecondary
                             )
                         }
@@ -212,8 +219,8 @@ fun HistoryScreen(
                         onClick = { dateFilter = filter },
                         label = { Text(filter.label) },
                         colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = ElectricViolet.copy(alpha = 0.25f),
-                            selectedLabelColor = ElectricVioletBright,
+                            selectedContainerColor = AmberOrangeMid.copy(alpha = 0.25f),
+                            selectedLabelColor = AmberGoldTop,
                             containerColor = ObsidianCard,
                             labelColor = TextSecondary
                         ),
@@ -221,7 +228,7 @@ fun HistoryScreen(
                             enabled = true,
                             selected = dateFilter == filter,
                             borderColor = ObsidianBorder,
-                            selectedBorderColor = ElectricViolet
+                            selectedBorderColor = AmberGoldTop
                         ),
                         modifier = Modifier.testTag("history_date_${filter.name.lowercase()}")
                     )
@@ -261,60 +268,76 @@ fun HistoryScreen(
                         )
                     }
                 } else {
-                    items(mergedRounds.take(50), key = { it.id }) { row ->
+                    item {
                         Surface(
-                            shape = RoundedCornerShape(16.dp),
+                            shape = RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp),
+                            color = AmberOrangeMid,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(Brush.horizontalGradient(listOf(AmberOrangeMid, AmberOrangeDeep)))
+                                    .padding(horizontal = 12.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("Period", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, color = Color.White, modifier = Modifier.weight(2.1f))
+                                Text("Number", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, color = Color.White, textAlign = TextAlign.Center, modifier = Modifier.weight(1.0f))
+                                Text("Big Small", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, color = Color.White, textAlign = TextAlign.Center, modifier = Modifier.weight(1.1f))
+                                Text("Color", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, color = Color.White, textAlign = TextAlign.Center, modifier = Modifier.weight(0.9f))
+                            }
+                        }
+                    }
+                    items(mergedRounds.take(50), key = { it.id }) { row ->
+                        val digitColor = when (row.resultDigit) {
+                            0, 5 -> ElectricViolet
+                            1, 3, 7, 9 -> NeonEmerald
+                            else -> RubyRed
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
                             color = ObsidianCard,
-                            border = BorderStroke(1.dp, ObsidianBorder),
+                            border = BorderStroke(0.6.dp, ObsidianBorder.copy(alpha = 0.55f)),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable { inspectedRound = row }
                         ) {
                             Row(
-                                modifier = Modifier.padding(14.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 11.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                    modifier = Modifier.weight(1f)
+                                Text(
+                                    text = row.periodId,
+                                    fontFamily = JetBrainsMonoFontFamily,
+                                    fontSize = 11.sp,
+                                    color = TextPrimary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(2.1f)
+                                )
+                                Text(
+                                    text = row.resultDigit.toString(),
+                                    fontFamily = JetBrainsMonoFontFamily,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontSize = 20.sp,
+                                    color = digitColor,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.weight(1.0f)
+                                )
+                                Text(
+                                    text = digitBigSmallLabel(row.resultDigit),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = TextPrimary,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.weight(1.1f)
+                                )
+                                Box(
+                                    contentAlignment = Alignment.Center,
+                                    modifier = Modifier.weight(0.9f)
                                 ) {
-                                    ColorOrbBadge(
-                                        color = row.winningColor,
-                                        digit = row.resultDigit,
-                                        size = 38.dp
-                                    )
-                                    Column {
-                                        Text(
-                                            text = "${row.mode.title} • ${row.periodId}",
-                                            fontFamily = JetBrainsMonoFontFamily,
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 12.sp,
-                                            color = TextPrimary
-                                        )
-                                        Text(
-                                            text = formatEpochMs(row.endTimeMs),
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = TextSecondary
-                                        )
-                                    }
-                                }
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Filled.Verified,
-                                        contentDescription = null,
-                                        tint = CyanPulse,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Text(
-                                        text = row.winningColor.displayName,
-                                        style = MaterialTheme.typography.labelLarge,
-                                        color = TextPrimary
-                                    )
+                                    WinGoColorDots(digit = row.resultDigit)
                                 }
                             }
                         }

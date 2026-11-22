@@ -23,14 +23,17 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CardGiftcard
+import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.SportsEsports
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -47,6 +50,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
@@ -63,13 +67,16 @@ import com.example.domain.ColorPredictionEngine
 import com.example.domain.GameMode
 import com.example.domain.RoundPhase
 import com.example.domain.VerifiableRoundOutcome
-import com.example.ui.components.ColorOrbBadge
+import com.example.ui.components.HowToPlayDialog
 import com.example.ui.components.RoundStatusChip
 import com.example.ui.components.RoundVerificationDialog
 import com.example.ui.components.VirtualCoinBalancePill
-import com.example.ui.components.VirtualDisclaimerBanner
+import com.example.ui.components.WinGoNumberBall
 import com.example.ui.components.formatCoins
 import com.example.ui.components.formatEpochMs
+import com.example.ui.theme.AmberGoldTop
+import com.example.ui.theme.AmberOrangeDeep
+import com.example.ui.theme.AmberOrangeMid
 import com.example.ui.theme.CoinGold
 import com.example.ui.theme.CoinGoldSoft
 import com.example.ui.theme.CyanPulse
@@ -82,6 +89,8 @@ import com.example.ui.theme.ObsidianBorder
 import com.example.ui.theme.ObsidianCanvas
 import com.example.ui.theme.ObsidianCard
 import com.example.ui.theme.ObsidianCardElevated
+import com.example.ui.theme.RoyalIndigoPill
+import com.example.ui.theme.RoyalIndigoPillBright
 import com.example.ui.theme.RubyRed
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
@@ -100,6 +109,7 @@ fun HomeScreen(
     onOpenNotifications: () -> Unit,
     onOpenProfile: () -> Unit,
     onOpenHistory: () -> Unit,
+    onOpenLeaderboard: () -> Unit,
     onClaimDailyBonus: () -> Unit
 ) {
     val todayUtc = remember { ColorPredictionEngine.formatUtcIsoDate(System.currentTimeMillis()) }
@@ -107,6 +117,7 @@ fun HomeScreen(
     val featuredRound = activeRounds[GameMode.MODE_30S]
     val recent30s = recentOutcomesByMode[GameMode.MODE_30S].orEmpty().take(12)
     var inspectedOutcome by remember { mutableStateOf<VerifiableRoundOutcome?>(null) }
+    var showHowToPlay by remember { mutableStateOf(false) }
 
     val activePickedModes = remember(predictions, activeRounds) {
         GameMode.entries.filter { mode ->
@@ -119,10 +130,10 @@ fun HomeScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(ObsidianCanvas),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        // Top Header Bar
+        // ShreeWin Style Brand Header
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -143,14 +154,15 @@ fun HomeScreen(
                         contentDescription = stringResource(R.string.cd_app_logo),
                         contentScale = ContentScale.Crop,
                         modifier = Modifier
-                            .size(40.dp)
+                            .size(42.dp)
                             .clip(RoundedCornerShape(12.dp))
                     )
                     Column {
                         Text(
                             text = stringResource(R.string.app_name),
                             style = MaterialTheme.typography.titleLarge,
-                            color = TextPrimary
+                            fontWeight = FontWeight.ExtraBold,
+                            color = AmberGoldTop
                         )
                         Text(
                             text = "Hi, ${profile?.displayName?.split(" ")?.firstOrNull() ?: "Player"}",
@@ -173,7 +185,7 @@ fun HomeScreen(
                     IconButton(
                         onClick = onOpenNotifications,
                         modifier = Modifier
-                            .size(48.dp)
+                            .size(44.dp)
                             .testTag("home_notifications_button")
                     ) {
                         BadgedBox(
@@ -199,17 +211,170 @@ fun HomeScreen(
             }
         }
 
-        // Virtual Coins Disclaimer
+        // Signature ShreeWin Dual Top Action Pills (Warm Amber-Gold + Royal Violet-Indigo)
         item {
-            VirtualDisclaimerBanner()
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(48.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(
+                            Brush.horizontalGradient(listOf(AmberGoldTop, AmberOrangeMid))
+                        )
+                        .clickable { onOpenGameMode(GameMode.MODE_30S) }
+                        .testTag("home_quick_play_pill")
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.PlayArrow,
+                            contentDescription = null,
+                            tint = ObsidianCanvas,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Text(
+                            text = "Play WinGo",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = ObsidianCanvas
+                        )
+                    }
+                }
+
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(48.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(
+                            Brush.horizontalGradient(listOf(RoyalIndigoPill, RoyalIndigoPillBright))
+                        )
+                        .clickable(enabled = !isClaimingBonus) {
+                            if (bonusClaimedToday) onOpenWallet() else onClaimDailyBonus()
+                        }
+                        .testTag("home_claim_daily_bonus_button")
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.CardGiftcard,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text(
+                            text = if (bonusClaimedToday) "Virtual Wallet" else "Get +500 VC",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = Color.White
+                        )
+                    }
+                }
+            }
         }
 
-        // Featured Live Game Hero Card
+        // ShreeWin Style Announcement Bar with Amber Megaphone & Detail Pill
+        item {
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = ObsidianCard,
+                border = BorderStroke(1.dp, ObsidianBorder.copy(alpha = 0.7f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.VolumeUp,
+                        contentDescription = null,
+                        tint = AmberGoldTop,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Text(
+                        text = "Virtual Coins Entertainment Arena — Pick Green, Violet, or Red with SHA-256 verifiable results.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextPrimary,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Surface(
+                        onClick = { showHowToPlay = true },
+                        shape = RoundedCornerShape(50),
+                        color = RoyalIndigoPill,
+                        modifier = Modifier.testTag("home_announcement_detail")
+                    ) {
+                        Text(
+                            text = "Detail",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                        )
+                    }
+                }
+            }
+        }
+
+        // Featured Live Hero Banner (ShreeWin Gold-Framed Banner)
         item {
             FeaturedArenaHeroCard(
                 round = featuredRound,
                 onPlayNow = { onOpenGameMode(GameMode.MODE_30S) }
             )
+        }
+
+        // 5 Circular Category Badges Strip (Matching Screenshot #3)
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                CategoryBadgeItem(
+                    label = "30s WinGo",
+                    icon = Icons.Filled.Bolt,
+                    gradient = listOf(AmberGoldTop, AmberOrangeDeep),
+                    onClick = { onOpenGameMode(GameMode.MODE_30S) }
+                )
+                CategoryBadgeItem(
+                    label = "1 Min",
+                    icon = Icons.Filled.Timer,
+                    gradient = listOf(NeonEmerald, Color(0xFF0A8A45)),
+                    onClick = { onOpenGameMode(GameMode.MODE_60S) }
+                )
+                CategoryBadgeItem(
+                    label = "3 Min",
+                    icon = Icons.Filled.SportsEsports,
+                    gradient = listOf(ElectricViolet, RoyalIndigoPill),
+                    onClick = { onOpenGameMode(GameMode.MODE_3M) }
+                )
+                CategoryBadgeItem(
+                    label = "5 Min",
+                    icon = Icons.Filled.Star,
+                    gradient = listOf(CyanPulse, Color(0xFF3B6BE8)),
+                    onClick = { onOpenGameMode(GameMode.MODE_5M) }
+                )
+                CategoryBadgeItem(
+                    label = "Rankings",
+                    icon = Icons.Filled.EmojiEvents,
+                    gradient = listOf(RubyRed, Color(0xFFD93654)),
+                    onClick = onOpenLeaderboard
+                )
+            }
         }
 
         // Player Pulse Quick Stats Strip
@@ -220,38 +385,56 @@ fun HomeScreen(
             )
         }
 
-        // Daily Login Bonus Banner
-        item {
-            DailyBonusCard(
-                claimedToday = bonusClaimedToday,
-                isLoading = isClaimingBonus,
-                onClaim = onClaimDailyBonus
-            )
-        }
-
-        // Game Modes Section Header
+        // Section Header: WinGo Live Games (Matching Screenshot #3 "Lottery ... All")
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .size(24.dp)
+                            .clip(CircleShape)
+                            .background(AmberGoldTop)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Star,
+                            contentDescription = null,
+                            tint = ObsidianCanvas,
+                            modifier = Modifier.size(15.dp)
+                        )
+                    }
                     Text(
-                        text = "Live Prediction Arenas",
-                        style = MaterialTheme.typography.headlineMedium,
+                        text = "WinGo Color Arenas",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.ExtraBold,
                         color = TextPrimary
                     )
+                }
+
+                Surface(
+                    onClick = { onOpenGameMode(GameMode.MODE_30S) },
+                    shape = RoundedCornerShape(8.dp),
+                    color = ObsidianCardElevated
+                ) {
                     Text(
-                        text = "4 independent real-time synchronized timers",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = TextSecondary
+                        text = "All",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = TextPrimary,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
                     )
                 }
             }
         }
 
-        // 2x2 Grid of all 4 Game Modes
+        // 2x2 Vibrant ShreeWin Gradient Game Mode Cards
         item {
             val modes = GameMode.entries
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -259,19 +442,23 @@ fun HomeScreen(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    GameModeLiveCard(
+                    ShreeWinArenaCard(
                         mode = modes[0],
                         round = activeRounds[modes[0]],
                         hasActivePick = modes[0] in activePickedModes,
-                        accent = RubyRed,
+                        gradient = listOf(Color(0xFF9348F5), Color(0xFF5D2EC6)),
+                        accent = AmberGoldTop,
+                        sampleDigit = recentOutcomesByMode[modes[0]]?.firstOrNull()?.resultDigit ?: 5,
                         onClick = { onOpenGameMode(modes[0]) },
                         modifier = Modifier.weight(1f)
                     )
-                    GameModeLiveCard(
+                    ShreeWinArenaCard(
                         mode = modes[1],
                         round = activeRounds[modes[1]],
                         hasActivePick = modes[1] in activePickedModes,
-                        accent = NeonEmerald,
+                        gradient = listOf(Color(0xFF14A45B), Color(0xFF0A663B)),
+                        accent = NeonEmeraldBright,
+                        sampleDigit = recentOutcomesByMode[modes[1]]?.firstOrNull()?.resultDigit ?: 7,
                         onClick = { onOpenGameMode(modes[1]) },
                         modifier = Modifier.weight(1f)
                     )
@@ -280,19 +467,23 @@ fun HomeScreen(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    GameModeLiveCard(
+                    ShreeWinArenaCard(
                         mode = modes[2],
                         round = activeRounds[modes[2]],
                         hasActivePick = modes[2] in activePickedModes,
-                        accent = ElectricViolet,
+                        gradient = listOf(Color(0xFFFF8627), Color(0xFFD94A1E)),
+                        accent = CoinGoldSoft,
+                        sampleDigit = recentOutcomesByMode[modes[2]]?.firstOrNull()?.resultDigit ?: 4,
                         onClick = { onOpenGameMode(modes[2]) },
                         modifier = Modifier.weight(1f)
                     )
-                    GameModeLiveCard(
+                    ShreeWinArenaCard(
                         mode = modes[3],
                         round = activeRounds[modes[3]],
                         hasActivePick = modes[3] in activePickedModes,
+                        gradient = listOf(Color(0xFF3978F6), Color(0xFF2342B5)),
                         accent = CyanPulse,
+                        sampleDigit = recentOutcomesByMode[modes[3]]?.firstOrNull()?.resultDigit ?: 0,
                         onClick = { onOpenGameMode(modes[3]) },
                         modifier = Modifier.weight(1f)
                     )
@@ -300,15 +491,15 @@ fun HomeScreen(
             }
         }
 
-        // Recent Results Strip
+        // Recent 30s Glossy Ball Results Strip
         item {
             Surface(
-                shape = RoundedCornerShape(20.dp),
+                shape = RoundedCornerShape(18.dp),
                 color = ObsidianCard,
                 border = BorderStroke(1.dp, ObsidianBorder),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
+                Column(modifier = Modifier.padding(14.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -316,12 +507,13 @@ fun HomeScreen(
                     ) {
                         Column {
                             Text(
-                                text = "Recent Turbo 30s Results",
+                                text = "Latest WinGo 30s Results",
                                 style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
                                 color = TextPrimary
                             )
                             Text(
-                                text = "Tap any orb to verify SHA-256 hash",
+                                text = "Tap any ball to verify SHA-256 hash",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = TextSecondary
                             )
@@ -340,32 +532,31 @@ fun HomeScreen(
                                 Text(
                                     text = "History",
                                     style = MaterialTheme.typography.labelMedium,
-                                    color = ElectricVioletBright
+                                    color = AmberGoldTop
                                 )
                                 Icon(
                                     imageVector = Icons.AutoMirrored.Filled.ArrowForward,
                                     contentDescription = null,
-                                    tint = ElectricVioletBright,
+                                    tint = AmberGoldTop,
                                     modifier = Modifier.size(14.dp)
                                 )
                             }
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(14.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
 
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         items(recent30s, key = { it.roundDocId }) { outcome ->
                             Column(
                                 horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.spacedBy(5.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
                                 modifier = Modifier
-                                    .clip(RoundedCornerShape(12.dp))
+                                    .clip(RoundedCornerShape(10.dp))
                                     .clickable { inspectedOutcome = outcome }
-                                    .padding(horizontal = 4.dp, vertical = 4.dp)
+                                    .padding(4.dp)
                             ) {
-                                ColorOrbBadge(
-                                    color = outcome.winningColor,
+                                WinGoNumberBall(
                                     digit = outcome.resultDigit,
                                     size = 38.dp
                                 )
@@ -382,7 +573,11 @@ fun HomeScreen(
             }
         }
 
-        item { Spacer(modifier = Modifier.height(12.dp)) }
+        item { Spacer(modifier = Modifier.height(10.dp)) }
+    }
+
+    if (showHowToPlay) {
+        HowToPlayDialog(onDismiss = { showHowToPlay = false })
     }
 
     inspectedOutcome?.let { outcome ->
@@ -399,14 +594,53 @@ fun HomeScreen(
 }
 
 @Composable
+private fun CategoryBadgeItem(
+    label: String,
+    icon: ImageVector,
+    gradient: List<Color>,
+    onClick: () -> Unit
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = Modifier
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 4.dp, vertical = 4.dp)
+    ) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .size(50.dp)
+                .clip(CircleShape)
+                .background(Brush.linearGradient(gradient))
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = label,
+                tint = Color.White,
+                modifier = Modifier.size(24.dp)
+            )
+        }
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = TextSecondary,
+            maxLines = 1
+        )
+    }
+}
+
+@Composable
 private fun FeaturedArenaHeroCard(
     round: ActiveRoundSnapshot?,
     onPlayNow: () -> Unit
 ) {
     Surface(
         onClick = onPlayNow,
-        shape = RoundedCornerShape(24.dp),
-        border = BorderStroke(1.dp, ElectricViolet.copy(alpha = 0.55f)),
+        shape = RoundedCornerShape(20.dp),
+        border = BorderStroke(1.5.dp, AmberGoldTop.copy(alpha = 0.7f)),
         modifier = Modifier
             .fillMaxWidth()
             .testTag("featured_arena_card")
@@ -414,7 +648,7 @@ private fun FeaturedArenaHeroCard(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(198.dp)
+                .height(176.dp)
         ) {
             Image(
                 painter = painterResource(id = R.drawable.img_hero_arena),
@@ -428,15 +662,15 @@ private fun FeaturedArenaHeroCard(
                     .background(
                         Brush.horizontalGradient(
                             0.0f to ObsidianCanvas.copy(alpha = 0.92f),
-                            0.65f to ObsidianCanvas.copy(alpha = 0.72f),
-                            1.0f to ObsidianCanvas.copy(alpha = 0.45f)
+                            0.6f to Color(0xFF1F1648).copy(alpha = 0.75f),
+                            1.0f to ObsidianCanvas.copy(alpha = 0.35f)
                         )
                     )
             )
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(18.dp),
+                    .padding(16.dp),
                 verticalArrangement = Arrangement.SpaceBetween
             ) {
                 Row(
@@ -446,15 +680,15 @@ private fun FeaturedArenaHeroCard(
                 ) {
                     Surface(
                         shape = RoundedCornerShape(50),
-                        color = ElectricViolet.copy(alpha = 0.25f),
-                        border = BorderStroke(1.dp, ElectricVioletBright.copy(alpha = 0.5f))
+                        color = AmberOrangeMid.copy(alpha = 0.25f),
+                        border = BorderStroke(1.dp, AmberGoldTop)
                     ) {
                         Text(
-                            text = "FEATURED • TURBO 30S",
+                            text = "LIVE • WINGO 30SEC",
                             fontFamily = JetBrainsMonoFontFamily,
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
-                            color = ElectricVioletBright,
+                            color = AmberGoldTop,
                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                         )
                     }
@@ -467,15 +701,15 @@ private fun FeaturedArenaHeroCard(
                     Text(
                         text = round?.let { ColorPredictionEngine.formatCountdown(it.remainingMs) } ?: "00:30",
                         fontFamily = JetBrainsMonoFontFamily,
-                        fontWeight = FontWeight.Bold,
+                        fontWeight = FontWeight.ExtraBold,
                         fontSize = 36.sp,
-                        color = if (round?.phase == RoundPhase.LOCKED) RubyRed else TextPrimary
+                        color = if (round?.phase == RoundPhase.LOCKED) RubyRed else AmberGoldTop
                     )
                     Text(
                         text = "Period ${round?.periodId ?: "--"}",
                         fontFamily = JetBrainsMonoFontFamily,
                         fontSize = 11.sp,
-                        color = TextSecondary
+                        color = TextPrimary.copy(alpha = 0.85f)
                     )
                 }
 
@@ -485,116 +719,24 @@ private fun FeaturedArenaHeroCard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Red 2x • Green 2x • Violet 4.5x",
+                        text = "Green 2x • Violet 4.5x • Red 2x",
                         style = MaterialTheme.typography.labelMedium,
                         color = CoinGoldSoft
                     )
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = ElectricViolet
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(Brush.horizontalGradient(listOf(AmberGoldTop, AmberOrangeDeep)))
+                            .padding(horizontal = 14.dp, vertical = 6.dp)
                     ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.PlayArrow,
-                                contentDescription = null,
-                                tint = Color.White,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Text(
-                                text = "Enter",
-                                style = MaterialTheme.typography.labelLarge,
-                                color = Color.White
-                            )
-                        }
+                        Text(
+                            text = "PLAY NOW",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = Color.White
+                        )
                     }
                 }
-            }
-        }
-    }
-}
-
-@Composable
-private fun DailyBonusCard(
-    claimedToday: Boolean,
-    isLoading: Boolean,
-    onClaim: () -> Unit
-) {
-    Surface(
-        shape = RoundedCornerShape(18.dp),
-        color = ObsidianCard,
-        border = BorderStroke(
-            1.dp,
-            if (claimedToday) ObsidianBorder else CoinGold.copy(alpha = 0.5f)
-        ),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                modifier = Modifier.weight(1f)
-            ) {
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier
-                        .size(44.dp)
-                        .clip(CircleShape)
-                        .background(CoinGold.copy(alpha = 0.16f))
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.CardGiftcard,
-                        contentDescription = null,
-                        tint = CoinGold,
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
-                Column {
-                    Text(
-                        text = "Daily Virtual Bonus",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = TextPrimary
-                    )
-                    Text(
-                        text = if (claimedToday) "Claimed for today (UTC)" else "+500 virtual demo coins ready",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = TextSecondary
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.width(8.dp))
-
-            Button(
-                onClick = onClaim,
-                enabled = !claimedToday && !isLoading,
-                shape = RoundedCornerShape(12.dp),
-                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = CoinGold,
-                    contentColor = ObsidianCanvas,
-                    disabledContainerColor = ObsidianCardElevated,
-                    disabledContentColor = TextSecondary
-                ),
-                modifier = Modifier
-                    .height(44.dp)
-                    .testTag("home_claim_daily_bonus_button")
-            ) {
-                Text(
-                    text = if (claimedToday) "Claimed" else "+500 VC",
-                    fontFamily = JetBrainsMonoFontFamily,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 12.sp
-                )
             }
         }
     }
@@ -613,7 +755,7 @@ private fun PlayerPulseStatsStrip(
 
     Surface(
         onClick = onOpenProfile,
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(16.dp),
         color = ObsidianCard,
         border = BorderStroke(1.dp, ObsidianBorder),
         modifier = Modifier
@@ -623,12 +765,12 @@ private fun PlayerPulseStatsStrip(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 12.dp),
+                .padding(horizontal = 14.dp, vertical = 11.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             PulseMiniMetric(label = "WIN RATE", value = "$winRate%", color = NeonEmeraldBright)
-            PulseMiniMetric(label = "STREAK", value = "${streak}x", color = CyanPulse)
+            PulseMiniMetric(label = "STREAK", value = "${streak}x", color = AmberGoldTop)
             PulseMiniMetric(label = "POINTS", value = formatCoins(points), color = CoinGoldSoft)
             PulseMiniMetric(label = "GAMES", value = totalGames.toString(), color = ElectricVioletBright)
         }
@@ -655,92 +797,64 @@ private fun PulseMiniMetric(label: String, value: String, color: Color) {
 }
 
 @Composable
-private fun GameModeLiveCard(
+private fun ShreeWinArenaCard(
     mode: GameMode,
     round: ActiveRoundSnapshot?,
     hasActivePick: Boolean,
+    gradient: List<Color>,
     accent: Color,
+    sampleDigit: Int,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val isLocked = round?.phase == RoundPhase.LOCKED
-    Surface(
-        onClick = onClick,
-        shape = RoundedCornerShape(20.dp),
-        color = ObsidianCard,
-        border = BorderStroke(
-            1.dp,
-            when {
-                hasActivePick -> CoinGold.copy(alpha = 0.75f)
-                isLocked -> RubyRed.copy(alpha = 0.55f)
-                else -> accent.copy(alpha = 0.35f)
-            }
-        ),
-        modifier = modifier.testTag("mode_card_${mode.id}")
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(18.dp))
+            .background(Brush.linearGradient(gradient))
+            .clickable(onClick = onClick)
+            .padding(14.dp)
+            .testTag("mode_card_${mode.id}")
     ) {
-        Column(
-            modifier = Modifier.padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = accent.copy(alpha = 0.16f)
+                    shape = RoundedCornerShape(50),
+                    color = Color.Black.copy(alpha = 0.25f)
                 ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Timer,
-                            contentDescription = null,
-                            tint = accent,
-                            modifier = Modifier.size(13.dp)
-                        )
-                        Text(
-                            text = mode.shortLabel.uppercase(Locale.US),
-                            fontFamily = JetBrainsMonoFontFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp,
-                            color = accent
-                        )
-                    }
+                    Text(
+                        text = when {
+                            hasActivePick -> "PICKED"
+                            isLocked -> "LOCKED"
+                            else -> "LIVE"
+                        },
+                        fontFamily = JetBrainsMonoFontFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 10.sp,
+                        color = if (hasActivePick) AmberGoldTop else Color.White,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                    )
                 }
-                Text(
-                    text = when {
-                        hasActivePick -> "PICKED"
-                        isLocked -> "LOCKED"
-                        else -> "LIVE"
-                    },
-                    fontFamily = JetBrainsMonoFontFamily,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 10.sp,
-                    color = when {
-                        hasActivePick -> CoinGoldSoft
-                        isLocked -> RubyRed
-                        else -> NeonEmerald
-                    }
-                )
+                WinGoNumberBall(digit = sampleDigit, size = 30.dp)
             }
 
             Column {
                 Text(
-                    text = mode.title,
+                    text = "WinGo ${mode.shortLabel.uppercase(Locale.US)}",
                     style = MaterialTheme.typography.titleMedium,
-                    color = TextPrimary
+                    fontWeight = FontWeight.ExtraBold,
+                    color = Color.White
                 )
-                Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = round?.let { ColorPredictionEngine.formatCountdown(it.remainingMs) } ?: "--:--",
                     fontFamily = JetBrainsMonoFontFamily,
-                    fontWeight = FontWeight.Bold,
+                    fontWeight = FontWeight.ExtraBold,
                     fontSize = 24.sp,
-                    color = if (isLocked) RubyRed else TextPrimary
+                    color = if (isLocked) Color(0xFFFFD6D6) else Color.White
                 )
             }
 
@@ -750,17 +864,15 @@ private fun GameModeLiveCard(
                     .fillMaxWidth()
                     .height(5.dp)
                     .clip(RoundedCornerShape(50)),
-                color = if (isLocked) RubyRed else accent,
-                trackColor = ObsidianCanvas
+                color = accent,
+                trackColor = Color.Black.copy(alpha = 0.25f)
             )
 
             Text(
-                text = "Period #${round?.periodId?.takeLast(5) ?: "-----"}",
+                text = "#${round?.periodId?.takeLast(5) ?: "-----"}",
                 fontFamily = JetBrainsMonoFontFamily,
                 fontSize = 10.sp,
-                color = TextSecondary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                color = Color.White.copy(alpha = 0.85f)
             )
         }
     }

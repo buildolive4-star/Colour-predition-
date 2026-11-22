@@ -29,7 +29,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Lock
@@ -40,12 +44,12 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -70,19 +74,25 @@ import com.example.domain.ActiveRoundSnapshot
 import com.example.domain.ColorPredictionEngine
 import com.example.domain.GameMode
 import com.example.domain.PredictionColor
-import com.example.domain.RoundPhase
 import com.example.domain.VerifiableRoundOutcome
 import com.example.ui.components.ColorOrbBadge
 import com.example.ui.components.EmptyStatePanel
-import com.example.ui.components.RoundStatusChip
+import com.example.ui.components.HowToPlayDialog
 import com.example.ui.components.RoundVerificationDialog
-import com.example.ui.components.VirtualCoinBalancePill
+import com.example.ui.components.WinGoHistoryTable
+import com.example.ui.components.WinGoModeSelectorBar
+import com.example.ui.components.WinGoNumberBall
+import com.example.ui.components.WinGoTicketCountdownCard
 import com.example.ui.components.accentColor
 import com.example.ui.components.brightColor
 import com.example.ui.components.deepColor
+import com.example.ui.components.digitToPredictionColor
 import com.example.ui.components.formatCoins
 import com.example.ui.components.formatEpochMs
 import com.example.ui.components.formatTimestamp
+import com.example.ui.theme.AmberGoldTop
+import com.example.ui.theme.AmberOrangeDeep
+import com.example.ui.theme.AmberOrangeMid
 import com.example.ui.theme.CoinGold
 import com.example.ui.theme.CoinGoldSoft
 import com.example.ui.theme.CyanPulse
@@ -95,13 +105,17 @@ import com.example.ui.theme.ObsidianBorder
 import com.example.ui.theme.ObsidianCanvas
 import com.example.ui.theme.ObsidianCard
 import com.example.ui.theme.ObsidianCardElevated
+import com.example.ui.theme.ObsidianSurface
 import com.example.ui.theme.RubyRed
 import com.example.ui.theme.RubyRedBright
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 import com.example.ui.viewmodel.RoundSettlementBanner
+import kotlin.random.Random
 
-private val STAKE_PRESETS = listOf(50L, 100L, 250L, 500L, 1000L)
+private val MULTIPLIERS = listOf(1, 5, 10, 20, 50, 100)
+private const val BASE_UNIT_COINS = 10L
+private const val HISTORY_PAGE_SIZE = 10
 
 @Composable
 fun GameArenaScreen(
@@ -112,8 +126,10 @@ fun GameArenaScreen(
     predictions: List<PredictionRecord>,
     latestBanner: RoundSettlementBanner?,
     isSubmitting: Boolean,
+    isClaimingBonus: Boolean,
     onSelectMode: (GameMode) -> Unit,
     onSubmitPrediction: (GameMode, PredictionColor, Long) -> Unit,
+    onClaimDailyBonus: () -> Unit,
     onClaimDemoRefill: () -> Unit,
     onDismissBanner: () -> Unit,
     onOpenWallet: () -> Unit,
@@ -130,9 +146,16 @@ fun GameArenaScreen(
     val recentOutcomes = recentOutcomesByMode[selectedMode].orEmpty()
 
     var selectedColor by remember { mutableStateOf(PredictionColor.GREEN) }
+    var selectedBallDigit by remember { mutableStateOf<Int?>(null) }
     var stakeCoins by remember { mutableLongStateOf(100L) }
+    var activeMultiplier by remember { mutableIntStateOf(10) }
+    var bottomTab by remember { mutableIntStateOf(0) } // 0 = Game history, 1 = Chart, 2 = My history
+    var historyPage by remember(selectedMode) { mutableIntStateOf(0) }
+    var showHowToPlay by remember { mutableStateOf(false) }
     var inspectedOutcome by remember { mutableStateOf<VerifiableRoundOutcome?>(null) }
 
+    val todayUtc = remember { ColorPredictionEngine.formatUtcIsoDate(System.currentTimeMillis()) }
+    val bonusClaimedToday = profile?.lastDailyBonusDate == todayUtc
     val availableCoins = profile?.virtualCoins ?: 0L
     val isLockedOrDone = activeRound == null || !activeRound.canPredict
     val alreadyPredicted = currentRoundPrediction != null
@@ -143,24 +166,25 @@ fun GameArenaScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(ObsidianCanvas),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        contentPadding = PaddingValues(bottom = 22.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        // Header with Back, Game Title & Virtual Balance
+        // Top ShreeWin / WinGo Curved Amber Backdrop + Floating Navy Wallet Card + 4-Mode Clock Bar
         item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                // Dark Top Bar
                 Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(ObsidianSurface)
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     IconButton(
                         onClick = onBack,
                         modifier = Modifier
-                            .size(48.dp)
+                            .size(44.dp)
                             .testTag("arena_back_button")
                     ) {
                         Icon(
@@ -169,61 +193,163 @@ fun GameArenaScreen(
                             tint = TextPrimary
                         )
                     }
-                    Column {
-                        Text(
-                            text = selectedMode.title,
-                            style = MaterialTheme.typography.headlineMedium,
-                            color = TextPrimary
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Bolt,
+                            contentDescription = null,
+                            tint = AmberGoldTop,
+                            modifier = Modifier.size(22.dp)
                         )
                         Text(
-                            text = selectedMode.subtitle,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = TextSecondary
+                            text = stringResource(R.string.app_name),
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = TextPrimary
+                        )
+                    }
+
+                    IconButton(
+                        onClick = onOpenWallet,
+                        modifier = Modifier
+                            .size(44.dp)
+                            .testTag("arena_top_wallet_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.AccountBalanceWallet,
+                            contentDescription = stringResource(R.string.cd_wallet),
+                            tint = AmberGoldTop
                         )
                     }
                 }
-                VirtualCoinBalancePill(coins = availableCoins, onClick = onOpenWallet)
-            }
-        }
 
-        // Independent Duration Switcher Tabs
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                GameMode.entries.forEach { mode ->
-                    val isSelected = mode == selectedMode
-                    val modeRound = activeRounds[mode]
-                    Surface(
-                        onClick = { onSelectMode(mode) },
-                        shape = RoundedCornerShape(14.dp),
-                        color = if (isSelected) ElectricViolet else ObsidianCard,
-                        border = BorderStroke(
-                            1.dp,
-                            if (isSelected) ElectricVioletBright else ObsidianBorder
-                        ),
+                // Curved Sunset Amber Backdrop with Floating Navy Wallet Card & Mode Selector
+                Box(modifier = Modifier.fillMaxWidth()) {
+                    // Amber curved background header
+                    Box(
                         modifier = Modifier
-                            .weight(1f)
-                            .testTag("arena_mode_tab_${mode.id}")
+                            .fillMaxWidth()
+                            .height(220.dp)
+                            .clip(RoundedCornerShape(bottomStart = 32.dp, bottomEnd = 32.dp))
+                            .background(
+                                Brush.verticalGradient(
+                                    listOf(AmberGoldTop, AmberOrangeMid, AmberOrangeDeep)
+                                )
+                            )
+                    )
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        Column(
-                            modifier = Modifier.padding(vertical = 8.dp, horizontal = 4.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
+                        // Floating Dark Navy Wallet Card
+                        Surface(
+                            shape = RoundedCornerShape(18.dp),
+                            color = ObsidianCard,
+                            border = BorderStroke(1.dp, ObsidianBorder.copy(alpha = 0.7f)),
+                            shadowElevation = 6.dp,
+                            modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text(
-                                text = mode.shortLabel.uppercase(),
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.Bold,
-                                color = if (isSelected) Color.White else TextPrimary
-                            )
-                            Text(
-                                text = modeRound?.let { ColorPredictionEngine.formatCountdown(it.remainingMs) } ?: "--:--",
-                                fontFamily = JetBrainsMonoFontFamily,
-                                fontSize = 10.sp,
-                                color = if (isSelected) Color.White.copy(alpha = 0.88f) else TextSecondary
-                            )
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Text(
+                                    text = "${formatCoins(availableCoins)} VC",
+                                    fontFamily = JetBrainsMonoFontFamily,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontSize = 26.sp,
+                                    color = TextPrimary
+                                )
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.AccountBalanceWallet,
+                                        contentDescription = null,
+                                        tint = NeonEmeraldBright,
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                    Text(
+                                        text = "Virtual Coin Wallet • Demo Only",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = TextSecondary
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.height(4.dp))
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    // Coral-Red Pill: Daily Bonus
+                                    Button(
+                                        onClick = onClaimDailyBonus,
+                                        enabled = !bonusClaimedToday && !isClaimingBonus,
+                                        shape = RoundedCornerShape(50),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = RubyRed,
+                                            contentColor = Color.White,
+                                            disabledContainerColor = ObsidianCardElevated,
+                                            disabledContentColor = TextSecondary
+                                        ),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(42.dp)
+                                            .testTag("arena_daily_bonus_pill")
+                                    ) {
+                                        Text(
+                                            text = if (bonusClaimedToday) "Daily Claimed" else "Daily +500 VC",
+                                            style = MaterialTheme.typography.labelLarge,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+
+                                    // Emerald-Green Pill: Wallet or Free Refill when low
+                                    val needsRefill = availableCoins < ColorPredictionEngine.DEMO_REFILL_THRESHOLD
+                                    Button(
+                                        onClick = {
+                                            if (needsRefill) onClaimDemoRefill() else onOpenWallet()
+                                        },
+                                        shape = RoundedCornerShape(50),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = NeonEmerald,
+                                            contentColor = Color.White
+                                        ),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(42.dp)
+                                            .testTag("arena_wallet_action_pill")
+                                    ) {
+                                        Text(
+                                            text = if (needsRefill) "Refill +1,000 VC" else "Wallet Ledger",
+                                            style = MaterialTheme.typography.labelLarge,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            }
                         }
+
+                        // 4-Column Circular Clock Mode Selector
+                        WinGoModeSelectorBar(
+                            selectedMode = selectedMode,
+                            activeRounds = activeRounds,
+                            onSelectMode = {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onSelectMode(it)
+                            }
+                        )
                     }
                 }
             }
@@ -234,7 +360,8 @@ fun GameArenaScreen(
             AnimatedVisibility(
                 visible = latestBanner != null && latestBanner.mode == selectedMode,
                 enter = fadeIn() + slideInVertically(),
-                exit = fadeOut()
+                exit = fadeOut(),
+                modifier = Modifier.padding(horizontal = 14.dp)
             ) {
                 latestBanner?.let { banner ->
                     ResultBannerCard(banner = banner, onDismiss = onDismissBanner)
@@ -242,82 +369,184 @@ fun GameArenaScreen(
             }
         }
 
-        // Live Countdown Stage Card
+        // Iconic Amber-Orange Ticket Countdown Card
         item {
-            LiveRoundStageCard(round = activeRound)
+            WinGoTicketCountdownCard(
+                mode = selectedMode,
+                round = activeRound,
+                recentOutcomes = recentOutcomes,
+                onHowToPlay = { showHowToPlay = true },
+                onInspectOutcome = { inspectedOutcome = it },
+                modifier = Modifier.padding(horizontal = 14.dp)
+            )
         }
 
-        // Glowing Color Selection Buttons
+        // Green / Violet / Red Vibrant WinGo Color Buttons (Order matches Screenshot #1)
         item {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Select Prediction Color",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = TextPrimary
-                    )
-                    Text(
-                        text = "Virtual Rewards Only",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = CyanPulse
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                listOf(
+                    PredictionColor.GREEN,
+                    PredictionColor.VIOLET,
+                    PredictionColor.RED
+                ).forEach { color ->
+                    WinGoColorChoiceButton(
+                        color = color,
+                        isSelected = selectedColor == color,
+                        enabled = canInteract,
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            selectedColor = color
+                            selectedBallDigit = null
+                        },
+                        modifier = Modifier.weight(1f)
                     )
                 }
+            }
+        }
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+        // 0-9 Glossy 3D Number Balls Board (2 rows x 5 columns)
+        item {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = ObsidianCard,
+                border = BorderStroke(1.dp, ObsidianBorder.copy(alpha = 0.6f)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    PredictionColor.entries.forEach { color ->
-                        GlowingColorChoiceButton(
-                            color = color,
-                            isSelected = selectedColor == color,
-                            enabled = canInteract,
-                            onClick = {
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                selectedColor = color
-                            },
-                            modifier = Modifier.weight(1f)
-                        )
+                    listOf(0..4, 5..9).forEach { range ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            range.forEach { digit ->
+                                val isPicked = selectedBallDigit == digit
+                                WinGoNumberBall(
+                                    digit = digit,
+                                    size = 54.dp,
+                                    isSelected = isPicked,
+                                    onClick = if (canInteract) {
+                                        {
+                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            selectedBallDigit = digit
+                                            selectedColor = digitToPredictionColor(digit)
+                                        }
+                                    } else {
+                                        null
+                                    },
+                                    modifier = Modifier.testTag("wingo_ball_$digit")
+                                )
+                            }
+                        }
                     }
                 }
             }
         }
 
-        // Virtual Stake Selector & Lock CTA
+        // Random + X1/X5/X10/X20/X50/X100 Multiplier Strip + Virtual Coin Entry CTA
         item {
             Surface(
-                shape = RoundedCornerShape(22.dp),
+                shape = RoundedCornerShape(18.dp),
                 color = ObsidianCard,
-                border = BorderStroke(1.dp, ObsidianBorder),
-                modifier = Modifier.fillMaxWidth()
+                border = BorderStroke(1.dp, ObsidianBorder.copy(alpha = 0.65f)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp)
             ) {
                 Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                    modifier = Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
+                    // Random + X1..X100 row (Screenshot #1 & #2)
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(7.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        item {
+                            Surface(
+                                onClick = {
+                                    if (canInteract) {
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        val randomDigit = Random.nextInt(0, 10)
+                                        selectedBallDigit = randomDigit
+                                        selectedColor = digitToPredictionColor(randomDigit)
+                                    }
+                                },
+                                shape = RoundedCornerShape(10.dp),
+                                color = ObsidianCanvas,
+                                border = BorderStroke(1.dp, RubyRed.copy(alpha = 0.85f)),
+                                modifier = Modifier.testTag("wingo_random_button")
+                            ) {
+                                Text(
+                                    text = "Random",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    color = RubyRedBright,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp)
+                                )
+                            }
+                        }
+                        items(MULTIPLIERS) { mult ->
+                            val isSelected = activeMultiplier == mult && stakeCoins == mult * BASE_UNIT_COINS
+                            Surface(
+                                onClick = {
+                                    if (canInteract) {
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        activeMultiplier = mult
+                                        stakeCoins = (mult * BASE_UNIT_COINS)
+                                            .coerceIn(ColorPredictionEngine.MIN_STAKE_COINS, ColorPredictionEngine.MAX_STAKE_COINS)
+                                    }
+                                },
+                                shape = RoundedCornerShape(10.dp),
+                                color = if (isSelected) NeonEmerald else ObsidianCanvas,
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (isSelected) NeonEmeraldBright else ObsidianBorder
+                                ),
+                                modifier = Modifier.testTag("stake_chip_${mult * BASE_UNIT_COINS}")
+                            ) {
+                                Text(
+                                    text = "X$mult",
+                                    fontFamily = JetBrainsMonoFontFamily,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 12.sp,
+                                    color = if (isSelected) Color.White else TextSecondary,
+                                    modifier = Modifier.padding(horizontal = 11.dp, vertical = 9.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    // Fine-tune +/- row + Projected Reward
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "Virtual Coin Entry",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = TextPrimary
-                        )
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             IconButton(
-                                onClick = { stakeCoins = (stakeCoins - 50L).coerceAtLeast(10L) },
-                                enabled = canInteract && stakeCoins > 10L,
+                                onClick = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    stakeCoins = (stakeCoins - 50L).coerceAtLeast(ColorPredictionEngine.MIN_STAKE_COINS)
+                                },
+                                enabled = canInteract && stakeCoins > ColorPredictionEngine.MIN_STAKE_COINS,
                                 modifier = Modifier
-                                    .size(36.dp)
+                                    .size(34.dp)
                                     .clip(CircleShape)
                                     .background(ObsidianCardElevated)
                                     .testTag("stake_decrease_button")
@@ -332,10 +561,13 @@ fun GameArenaScreen(
                                 color = CoinGoldSoft
                             )
                             IconButton(
-                                onClick = { stakeCoins = (stakeCoins + 50L).coerceAtMost(ColorPredictionEngine.MAX_STAKE_COINS) },
+                                onClick = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    stakeCoins = (stakeCoins + 50L).coerceAtMost(ColorPredictionEngine.MAX_STAKE_COINS)
+                                },
                                 enabled = canInteract,
                                 modifier = Modifier
-                                    .size(36.dp)
+                                    .size(34.dp)
                                     .clip(CircleShape)
                                     .background(ObsidianCardElevated)
                                     .testTag("stake_increase_button")
@@ -343,120 +575,31 @@ fun GameArenaScreen(
                                 Icon(Icons.Filled.Add, contentDescription = "Increase virtual stake", tint = TextPrimary, modifier = Modifier.size(16.dp))
                             }
                         }
-                    }
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        STAKE_PRESETS.forEach { preset ->
-                            val isSelected = stakeCoins == preset
-                            Surface(
-                                onClick = {
-                                    if (canInteract) {
-                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                        stakeCoins = preset
-                                    }
-                                },
-                                shape = RoundedCornerShape(10.dp),
-                                color = if (isSelected) CoinGold.copy(alpha = 0.22f) else ObsidianCanvas,
-                                border = BorderStroke(
-                                    1.dp,
-                                    if (isSelected) CoinGold else ObsidianBorder
-                                ),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .testTag("stake_chip_$preset")
-                            ) {
-                                Box(
-                                    contentAlignment = Alignment.Center,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 8.dp)
-                                ) {
-                                    Text(
-                                        text = preset.toString(),
-                                        fontFamily = JetBrainsMonoFontFamily,
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 12.sp,
-                                        color = if (isSelected) CoinGoldSoft else TextSecondary
-                                    )
-                                }
-                            }
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text(
+                                text = "Win Reward (${selectedColor.multiplierLabel})",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = TextSecondary
+                            )
+                            Text(
+                                text = "+${formatCoins(projectedReward)} VC",
+                                fontFamily = JetBrainsMonoFontFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp,
+                                color = selectedColor.brightColor()
+                            )
                         }
                     }
 
-                    // Quick Scale Helpers (1/2, 2x, MAX)
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        val maxStake = availableCoins.coerceIn(
-                            ColorPredictionEngine.MIN_STAKE_COINS,
-                            ColorPredictionEngine.MAX_STAKE_COINS
-                        )
-                        listOf(
-                            "½" to { (stakeCoins / 2L).coerceAtLeast(ColorPredictionEngine.MIN_STAKE_COINS) },
-                            "2x" to { (stakeCoins * 2L).coerceAtMost(maxStake) },
-                            "MAX" to { maxStake }
-                        ).forEach { (label, nextStake) ->
-                            Surface(
-                                onClick = {
-                                    if (canInteract && availableCoins >= ColorPredictionEngine.MIN_STAKE_COINS) {
-                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                        stakeCoins = nextStake()
-                                    }
-                                },
-                                shape = RoundedCornerShape(10.dp),
-                                color = ObsidianCardElevated,
-                                border = BorderStroke(1.dp, ObsidianBorder),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .testTag("stake_scale_${label.lowercase()}")
-                            ) {
-                                Box(
-                                    contentAlignment = Alignment.Center,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 6.dp)
-                                ) {
-                                    Text(
-                                        text = label,
-                                        fontFamily = JetBrainsMonoFontFamily,
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 11.sp,
-                                        color = CyanPulse
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(
-                            text = "Projected Virtual Reward (${selectedColor.multiplierLabel})",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = TextSecondary
-                        )
-                        Text(
-                            text = "+${formatCoins(projectedReward)} VC",
-                            fontFamily = JetBrainsMonoFontFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 13.sp,
-                            color = selectedColor.brightColor()
-                        )
-                    }
-
+                    // Lock Prediction Primary CTA
                     Button(
                         onClick = {
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             onSubmitPrediction(selectedMode, selectedColor, stakeCoins)
                         },
                         enabled = canInteract && availableCoins >= stakeCoins,
-                        shape = RoundedCornerShape(16.dp),
+                        shape = RoundedCornerShape(50),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = selectedColor.accentColor(),
                             contentColor = Color.White,
@@ -465,7 +608,7 @@ fun GameArenaScreen(
                         ),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(54.dp)
+                            .height(50.dp)
                             .testTag("lock_prediction_button")
                     ) {
                         when {
@@ -481,7 +624,8 @@ fun GameArenaScreen(
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
                                     text = "Locked ${currentRoundPrediction?.selectedColor} (${formatCoins(currentRoundPrediction?.stakeCoins ?: 0L)} VC)",
-                                    style = MaterialTheme.typography.titleMedium
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold
                                 )
                             }
                             isLockedOrDone -> {
@@ -489,216 +633,175 @@ fun GameArenaScreen(
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
                                     text = stringResource(R.string.round_locked_label),
-                                    style = MaterialTheme.typography.titleMedium
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold
                                 )
                             }
                             availableCoins < stakeCoins -> {
                                 Text(
                                     text = "Insufficient Virtual Coins",
-                                    style = MaterialTheme.typography.titleMedium
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold
                                 )
                             }
                             else -> {
                                 Text(
                                     text = "Lock ${selectedColor.displayName} • ${formatCoins(stakeCoins)} VC",
                                     style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold
+                                    fontWeight = FontWeight.ExtraBold
                                 )
                             }
-                        }
-                    }
-
-                    if (availableCoins < ColorPredictionEngine.DEMO_REFILL_THRESHOLD) {
-                        Button(
-                            onClick = {
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                onClaimDemoRefill()
-                            },
-                            shape = RoundedCornerShape(14.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = CoinGold,
-                                contentColor = ObsidianCanvas
-                            ),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(48.dp)
-                                .testTag("arena_free_refill_button")
-                        ) {
-                            Text(
-                                text = "Free Virtual Refill (+1,000 VC)",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold
-                            )
                         }
                     }
                 }
             }
         }
 
-        // Last 20 Verifiable Results & Live Color Trend
+        // 3-Tab History Bar (Game history | Chart | My history) matching Screenshot #2
         item {
-            val totalCount = recentOutcomes.size.coerceAtLeast(1)
-            val redCount = recentOutcomes.count { it.winningColor == PredictionColor.RED }
-            val greenCount = recentOutcomes.count { it.winningColor == PredictionColor.GREEN }
-            val violetCount = recentOutcomes.count { it.winningColor == PredictionColor.VIOLET }
-            val redPct = (redCount * 100) / totalCount
-            val greenPct = (greenCount * 100) / totalCount
-            val violetPct = (violetCount * 100) / totalCount
-
-            Surface(
-                shape = RoundedCornerShape(20.dp),
-                color = ObsidianCard,
-                border = BorderStroke(1.dp, ObsidianBorder),
-                modifier = Modifier.fillMaxWidth()
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                listOf("Game history", "Chart", "My history").forEachIndexed { idx, label ->
+                    val isSelected = bottomTab == idx
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(42.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(
+                                if (isSelected) {
+                                    Brush.horizontalGradient(listOf(AmberGoldTop, AmberOrangeMid))
+                                } else {
+                                    Brush.horizontalGradient(listOf(ObsidianCard, ObsidianCard))
+                                }
+                            )
+                            .clickable { bottomTab = idx }
+                            .testTag("arena_bottom_tab_$idx")
                     ) {
                         Text(
-                            text = "Last ${recentOutcomes.size} Rounds & Trend",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = TextPrimary
+                            text = label,
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Medium,
+                            color = if (isSelected) Color.White else TextSecondary
                         )
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.Verified,
-                                contentDescription = null,
-                                tint = CyanPulse,
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Text(
-                                text = "SHA-256",
-                                fontFamily = JetBrainsMonoFontFamily,
-                                fontSize = 11.sp,
-                                color = CyanPulse
-                            )
-                        }
                     }
+                }
+            }
+        }
 
-                    Spacer(modifier = Modifier.height(10.dp))
+        // Tab Content
+        when (bottomTab) {
+            0 -> {
+                val totalPages = ((recentOutcomes.size + HISTORY_PAGE_SIZE - 1) / HISTORY_PAGE_SIZE).coerceAtLeast(1)
+                val safePage = historyPage.coerceIn(0, totalPages - 1)
+                val pageItems = recentOutcomes.drop(safePage * HISTORY_PAGE_SIZE).take(HISTORY_PAGE_SIZE)
 
-                    // Segmented Color Trend Distribution Bar
-                    Row(
+                item {
+                    WinGoHistoryTable(
+                        outcomes = pageItems,
+                        onInspectOutcome = { inspectedOutcome = it },
+                        modifier = Modifier.padding(horizontal = 14.dp)
+                    )
+                }
+
+                // Pagination Bar matching Screenshot #2 (<   1/2   >)
+                item {
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = ObsidianCard,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(8.dp)
-                            .clip(RoundedCornerShape(50))
-                            .background(ObsidianCanvas),
-                        horizontalArrangement = Arrangement.spacedBy(2.dp)
+                            .padding(horizontal = 14.dp)
                     ) {
-                        if (redCount > 0) {
-                            Box(
-                                modifier = Modifier
-                                    .weight(redCount.toFloat())
-                                    .fillMaxSize()
-                                    .background(RubyRed)
-                            )
-                        }
-                        if (greenCount > 0) {
-                            Box(
-                                modifier = Modifier
-                                    .weight(greenCount.toFloat())
-                                    .fillMaxSize()
-                                    .background(NeonEmerald)
-                            )
-                        }
-                        if (violetCount > 0) {
-                            Box(
-                                modifier = Modifier
-                                    .weight(violetCount.toFloat())
-                                    .fillMaxSize()
-                                    .background(ElectricViolet)
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(
-                            text = "RED $redPct%",
-                            fontFamily = JetBrainsMonoFontFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp,
-                            color = RubyRedBright
-                        )
-                        Text(
-                            text = "GREEN $greenPct%",
-                            fontFamily = JetBrainsMonoFontFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp,
-                            color = NeonEmeraldBright
-                        )
-                        Text(
-                            text = "VIOLET $violetPct%",
-                            fontFamily = JetBrainsMonoFontFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp,
-                            color = ElectricVioletBright
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        items(recentOutcomes.take(15), key = { it.roundDocId }) { outcome ->
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.spacedBy(4.dp),
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .clickable { inspectedOutcome = outcome }
-                                    .padding(4.dp)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 10.dp),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Surface(
+                                onClick = { if (safePage > 0) historyPage = safePage - 1 },
+                                enabled = safePage > 0,
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (safePage > 0) AmberOrangeMid else ObsidianCardElevated,
+                                modifier = Modifier.size(38.dp)
                             ) {
-                                ColorOrbBadge(
-                                    color = outcome.winningColor,
-                                    digit = outcome.resultDigit,
-                                    size = 36.dp
-                                )
-                                Text(
-                                    text = "#${outcome.periodId.takeLast(4)}",
-                                    fontFamily = JetBrainsMonoFontFamily,
-                                    fontSize = 10.sp,
-                                    color = TextSecondary
-                                )
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                                        contentDescription = "Previous page",
+                                        tint = if (safePage > 0) Color.White else TextSecondary
+                                    )
+                                }
+                            }
+
+                            Text(
+                                text = "${safePage + 1}/$totalPages",
+                                fontFamily = JetBrainsMonoFontFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp,
+                                color = TextPrimary,
+                                modifier = Modifier.padding(horizontal = 24.dp)
+                            )
+
+                            Surface(
+                                onClick = { if (safePage < totalPages - 1) historyPage = safePage + 1 },
+                                enabled = safePage < totalPages - 1,
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (safePage < totalPages - 1) AmberOrangeMid else ObsidianCardElevated,
+                                modifier = Modifier.size(38.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                        contentDescription = "Next page",
+                                        tint = if (safePage < totalPages - 1) Color.White else TextSecondary
+                                    )
+                                }
                             }
                         }
                     }
                 }
             }
-        }
 
-        // My Predictions in This Mode
-        item {
-            Text(
-                text = "My ${selectedMode.shortLabel.uppercase()} Predictions",
-                style = MaterialTheme.typography.titleLarge,
-                color = TextPrimary
-            )
-        }
-
-        if (modePredictions.isEmpty()) {
-            item {
-                EmptyStatePanel(
-                    title = "No predictions in ${selectedMode.title} yet",
-                    subtitle = "Choose Red, Green, or Violet above to lock your first virtual entry."
-                )
+            1 -> {
+                item {
+                    ColorTrendChartCard(
+                        recentOutcomes = recentOutcomes,
+                        onInspectOutcome = { inspectedOutcome = it },
+                        modifier = Modifier.padding(horizontal = 14.dp)
+                    )
+                }
             }
-        } else {
-            items(modePredictions.take(10), key = { it.id.ifBlank { it.periodId } }) { pred ->
-                PredictionRowCard(prediction = pred)
+
+            else -> {
+                if (modePredictions.isEmpty()) {
+                    item {
+                        EmptyStatePanel(
+                            title = "No predictions in ${selectedMode.title} yet",
+                            subtitle = "Pick Green, Violet, Red, or a numbered ball above to lock your virtual entry.",
+                            modifier = Modifier.padding(horizontal = 14.dp)
+                        )
+                    }
+                } else {
+                    items(modePredictions.take(15), key = { it.id.ifBlank { it.periodId } }) { pred ->
+                        Box(modifier = Modifier.padding(horizontal = 14.dp)) {
+                            PredictionRowCard(prediction = pred)
+                        }
+                    }
+                }
             }
         }
+    }
 
-        item { Spacer(modifier = Modifier.height(16.dp)) }
+    if (showHowToPlay) {
+        HowToPlayDialog(onDismiss = { showHowToPlay = false })
     }
 
     inspectedOutcome?.let { outcome ->
@@ -715,108 +818,7 @@ fun GameArenaScreen(
 }
 
 @Composable
-private fun LiveRoundStageCard(round: ActiveRoundSnapshot?) {
-    val isLocked = round?.phase == RoundPhase.LOCKED
-    val isPending = round?.phase == RoundPhase.RESULT_PENDING
-    val borderColor = when {
-        isLocked -> RubyRed.copy(alpha = 0.7f)
-        isPending -> CoinGold.copy(alpha = 0.7f)
-        else -> ElectricViolet.copy(alpha = 0.55f)
-    }
-
-    Surface(
-        shape = RoundedCornerShape(24.dp),
-        color = ObsidianCard,
-        border = BorderStroke(1.5.dp, borderColor),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(
-                    Brush.verticalGradient(
-                        listOf(
-                            borderColor.copy(alpha = 0.14f),
-                            ObsidianCard
-                        )
-                    )
-                )
-                .padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column {
-                    Text(
-                        text = "CURRENT PERIOD",
-                        fontFamily = JetBrainsMonoFontFamily,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = TextSecondary
-                    )
-                    Text(
-                        text = round?.periodId ?: "Syncing...",
-                        fontFamily = JetBrainsMonoFontFamily,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = TextPrimary
-                    )
-                }
-                RoundStatusChip(phase = round?.phase ?: RoundPhase.WAITING)
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.Bottom
-            ) {
-                Column {
-                    Text(
-                        text = if (isLocked) "LOCKING IN" else "TIME REMAINING",
-                        fontFamily = JetBrainsMonoFontFamily,
-                        fontSize = 10.sp,
-                        color = if (isLocked) RubyRedBright else TextSecondary
-                    )
-                    Text(
-                        text = round?.let { ColorPredictionEngine.formatCountdown(it.remainingMs) } ?: "--:--",
-                        fontFamily = JetBrainsMonoFontFamily,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 44.sp,
-                        color = if (isLocked) RubyRed else TextPrimary
-                    )
-                }
-                Column(horizontalAlignment = Alignment.End) {
-                    Text(
-                        text = "Locks ${round?.mode?.lockBeforeEndSeconds ?: 5}s before close",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = TextSecondary
-                    )
-                    Text(
-                        text = "Auto-advances on close",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = CyanPulse
-                    )
-                }
-            }
-
-            LinearProgressIndicator(
-                progress = { 1f - (round?.progress ?: 0f) },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(8.dp)
-                    .clip(RoundedCornerShape(50)),
-                color = if (isLocked) RubyRed else NeonEmerald,
-                trackColor = ObsidianCanvas
-            )
-        }
-    }
-}
-
-@Composable
-private fun GlowingColorChoiceButton(
+private fun WinGoColorChoiceButton(
     color: PredictionColor,
     isSelected: Boolean,
     enabled: Boolean,
@@ -824,16 +826,19 @@ private fun GlowingColorChoiceButton(
     modifier: Modifier = Modifier
 ) {
     val scale by animateFloatAsState(
-        targetValue = if (isSelected && enabled) 1.03f else 1f,
+        targetValue = if (isSelected && enabled) 1.04f else 1f,
         animationSpec = spring(dampingRatio = 0.65f, stiffness = 420f),
-        label = "color_choice_scale"
+        label = "wingo_color_scale"
     )
+    // Signature asymmetric WinGo corners matching Screenshot #1
+    val shape = when (color) {
+        PredictionColor.GREEN -> RoundedCornerShape(topStart = 4.dp, topEnd = 16.dp, bottomStart = 16.dp, bottomEnd = 4.dp)
+        PredictionColor.VIOLET -> RoundedCornerShape(10.dp)
+        PredictionColor.RED -> RoundedCornerShape(topStart = 16.dp, topEnd = 4.dp, bottomStart = 4.dp, bottomEnd = 16.dp)
+    }
     val brush = if (enabled) {
         Brush.verticalGradient(
-            listOf(
-                color.accentColor().copy(alpha = if (isSelected) 0.95f else 0.70f),
-                color.deepColor().copy(alpha = if (isSelected) 0.95f else 0.72f)
-            )
+            listOf(color.accentColor(), color.deepColor().copy(alpha = 0.92f))
         )
     } else {
         Brush.verticalGradient(listOf(ObsidianCardElevated, ObsidianCard))
@@ -842,40 +847,133 @@ private fun GlowingColorChoiceButton(
     Box(
         modifier = modifier
             .scale(scale)
-            .height(92.dp)
-            .clip(RoundedCornerShape(20.dp))
+            .height(54.dp)
+            .clip(shape)
             .background(brush)
             .border(
                 width = if (isSelected && enabled) 2.5.dp else 1.dp,
-                color = if (isSelected && enabled) Color.White else color.brightColor().copy(alpha = 0.35f),
-                shape = RoundedCornerShape(20.dp)
+                color = if (isSelected && enabled) AmberGoldTop else Color.White.copy(alpha = 0.18f),
+                shape = shape
             )
             .clickable(enabled = enabled, onClick = onClick)
             .testTag("color_button_${color.name.lowercase()}"),
         contentAlignment = Alignment.Center
     ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
-                text = color.displayName.uppercase(),
+                text = color.displayName,
                 style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
+                fontWeight = FontWeight.ExtraBold,
                 color = if (enabled) Color.White else TextSecondary
             )
-            Surface(
-                shape = RoundedCornerShape(50),
-                color = Color.Black.copy(alpha = 0.28f)
+            Text(
+                text = color.multiplierLabel,
+                fontFamily = JetBrainsMonoFontFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 10.sp,
+                color = if (enabled) Color.White.copy(alpha = 0.9f) else TextSecondary
+            )
+        }
+    }
+}
+
+@Composable
+private fun ColorTrendChartCard(
+    recentOutcomes: List<VerifiableRoundOutcome>,
+    onInspectOutcome: (VerifiableRoundOutcome) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val totalCount = recentOutcomes.size.coerceAtLeast(1)
+    val redCount = recentOutcomes.count { it.winningColor == PredictionColor.RED }
+    val greenCount = recentOutcomes.count { it.winningColor == PredictionColor.GREEN }
+    val violetCount = recentOutcomes.count { it.winningColor == PredictionColor.VIOLET }
+    val redPct = (redCount * 100) / totalCount
+    val greenPct = (greenCount * 100) / totalCount
+    val violetPct = (violetCount * 100) / totalCount
+
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = ObsidianCard,
+        border = BorderStroke(1.dp, ObsidianBorder),
+        modifier = modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = color.multiplierLabel,
-                    fontFamily = JetBrainsMonoFontFamily,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 12.sp,
-                    color = if (enabled) Color.White else TextSecondary,
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp)
+                    text = "Last ${recentOutcomes.size} Rounds Trend",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = TextPrimary
                 )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Verified,
+                        contentDescription = null,
+                        tint = AmberGoldTop,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Text(
+                        text = "SHA-256",
+                        fontFamily = JetBrainsMonoFontFamily,
+                        fontSize = 11.sp,
+                        color = AmberGoldTop
+                    )
+                }
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(10.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(ObsidianCanvas),
+                horizontalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                if (greenCount > 0) {
+                    Box(modifier = Modifier.weight(greenCount.toFloat()).fillMaxSize().background(NeonEmerald))
+                }
+                if (violetCount > 0) {
+                    Box(modifier = Modifier.weight(violetCount.toFloat()).fillMaxSize().background(ElectricViolet))
+                }
+                if (redCount > 0) {
+                    Box(modifier = Modifier.weight(redCount.toFloat()).fillMaxSize().background(RubyRed))
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("GREEN $greenPct% ($greenCount)", fontFamily = JetBrainsMonoFontFamily, fontWeight = FontWeight.Bold, fontSize = 11.sp, color = NeonEmeraldBright)
+                Text("VIOLET $violetPct% ($violetCount)", fontFamily = JetBrainsMonoFontFamily, fontWeight = FontWeight.Bold, fontSize = 11.sp, color = ElectricVioletBright)
+                Text("RED $redPct% ($redCount)", fontFamily = JetBrainsMonoFontFamily, fontWeight = FontWeight.Bold, fontSize = 11.sp, color = RubyRedBright)
+            }
+
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                items(recentOutcomes.take(15), key = { it.roundDocId }) { outcome ->
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable { onInspectOutcome(outcome) }
+                            .padding(4.dp)
+                    ) {
+                        WinGoNumberBall(digit = outcome.resultDigit, size = 36.dp)
+                        Text(
+                            text = "#${outcome.periodId.takeLast(4)}",
+                            fontFamily = JetBrainsMonoFontFamily,
+                            fontSize = 10.sp,
+                            color = TextSecondary
+                        )
+                    }
+                }
             }
         }
     }
@@ -889,16 +987,16 @@ private fun ResultBannerCard(
     val accent = when {
         banner.userPredicted && banner.didWin -> NeonEmerald
         banner.userPredicted && !banner.didWin -> RubyRed
-        else -> banner.winningColor.accentColor()
+        else -> AmberOrangeMid
     }
     Surface(
-        shape = RoundedCornerShape(18.dp),
-        color = accent.copy(alpha = 0.16f),
-        border = BorderStroke(1.dp, accent.copy(alpha = 0.65f)),
+        shape = RoundedCornerShape(16.dp),
+        color = accent.copy(alpha = 0.18f),
+        border = BorderStroke(1.dp, accent.copy(alpha = 0.7f)),
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
-            modifier = Modifier.padding(14.dp),
+            modifier = Modifier.padding(12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
@@ -907,11 +1005,7 @@ private fun ResultBannerCard(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 modifier = Modifier.weight(1f)
             ) {
-                ColorOrbBadge(
-                    color = banner.winningColor,
-                    digit = banner.resultDigit,
-                    size = 42.dp
-                )
+                WinGoNumberBall(digit = banner.resultDigit, size = 40.dp)
                 Column {
                     Text(
                         text = when {
@@ -919,13 +1013,14 @@ private fun ResultBannerCard(
                             banner.userPredicted -> "Round Settled • ${banner.winningColor.displayName}"
                             else -> "Result Declared • ${banner.winningColor.displayName}"
                         },
-                        style = MaterialTheme.typography.titleMedium,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
                         color = TextPrimary
                     )
                     Text(
                         text = "Period ${banner.periodId} • Proof ${banner.resultHash.take(10)}...",
                         fontFamily = JetBrainsMonoFontFamily,
-                        fontSize = 11.sp,
+                        fontSize = 10.sp,
                         color = TextSecondary
                     )
                 }
@@ -948,9 +1043,9 @@ fun PredictionRowCard(prediction: PredictionRecord) {
     }
 
     Surface(
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(14.dp),
         color = ObsidianCard,
-        border = BorderStroke(1.dp, ObsidianBorder),
+        border = BorderStroke(1.dp, ObsidianBorder.copy(alpha = 0.75f)),
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(

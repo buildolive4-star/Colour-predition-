@@ -2,31 +2,40 @@ package com.example.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// Deep Obsidian Luxury Gaming Palette
-val ObsidianCanvas = Color(0xFF0B0E17)
-val ObsidianSurface = Color(0xFF121826)
-val ObsidianCard = Color(0xFF172033)
-val ObsidianCardElevated = Color(0xFF1F2B44)
-val ObsidianBorder = Color(0xFF2B3957)
+// ShreeWin / WinGo Royal Midnight Navy Palette
+val ObsidianCanvas = Color(0xFF141831)
+val ObsidianSurface = Color(0xFF1A2042)
+val ObsidianCard = Color(0xFF1F274B)
+val ObsidianCardElevated = Color(0xFF28335E)
+val ObsidianBorder = Color(0xFF354378)
 
-// Brand & Semantic Gaming Accents
-val ElectricViolet = Color(0xFF9D4EDD)
-val ElectricVioletBright = Color(0xFFC77DFF)
-val ElectricVioletDeep = Color(0xFF5A189A)
+// Signature Sunset Amber-Orange Gradient Accents
+val AmberGoldTop = Color(0xFFFFB830)
+val AmberOrangeMid = Color(0xFFFF8A18)
+val AmberOrangeDeep = Color(0xFFF3650A)
+val RoyalIndigoPill = Color(0xFF6D5DF6)
+val RoyalIndigoPillBright = Color(0xFF8B7CFF)
+val BigOrange = Color(0xFFFFA526)
+val SmallSkyBlue = Color(0xFF6BA6F7)
 
-val RubyRed = Color(0xFFFF3B5C)
-val RubyRedBright = Color(0xFFFF6B85)
-val RubyRedDeep = Color(0xFF991B33)
+// Brand & Semantic Gaming Accents (WinGo Classic Bright Palette)
+val ElectricViolet = Color(0xFFB659FE)
+val ElectricVioletBright = Color(0xFFD696FF)
+val ElectricVioletDeep = Color(0xFF6B21A8)
 
-val NeonEmerald = Color(0xFF00E676)
-val NeonEmeraldBright = Color(0xFF69F0AE)
-val NeonEmeraldDeep = Color(0xFF007B40)
+val RubyRed = Color(0xFFFB5B5B)
+val RubyRedBright = Color(0xFFFF8787)
+val RubyRedDeep = Color(0xFFC52C2C)
 
-val CoinGold = Color(0xFFFFC83D)
-val CoinGoldSoft = Color(0xFFFFE082)
-val CyanPulse = Color(0xFF38BDF8)
+val NeonEmerald = Color(0xFF18B660)
+val NeonEmeraldBright = Color(0xFF4ADE80)
+val NeonEmeraldDeep = Color(0xFF0E7A3E)
+
+val CoinGold = Color(0xFFFFB224)
+val CoinGoldSoft = Color(0xFFFFDC7A)
+val CyanPulse = Color(0xFF6BA6F7)
 
 // Text Hierarchy
 val TextPrimary = Color(0xFFF8FAFC)
-val TextSecondary = Color(0xFF94A3B8)
-val TextMuted = Color(0xFF64748B)
+val TextSecondary = Color(0xFFA7B3D1)
+val TextMuted = Color(0xFF6F7DA3)

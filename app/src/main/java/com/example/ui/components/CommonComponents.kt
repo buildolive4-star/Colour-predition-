@@ -1,6 +1,7 @@
 package com.example.ui.components
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -9,11 +10,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -32,6 +33,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
@@ -44,6 +47,8 @@ import androidx.compose.ui.unit.sp
 import com.example.R
 import com.example.domain.PredictionColor
 import com.example.domain.RoundPhase
+import com.example.ui.theme.AmberGoldTop
+import com.example.ui.theme.AmberOrangeMid
 import com.example.ui.theme.CoinGold
 import com.example.ui.theme.CoinGoldSoft
 import com.example.ui.theme.CyanPulse
@@ -86,6 +91,14 @@ fun PredictionColor.deepColor(): Color = when (this) {
     PredictionColor.VIOLET -> ElectricVioletDeep
 }
 
+fun digitToPredictionColor(digit: Int): PredictionColor = when (digit) {
+    0, 5 -> PredictionColor.VIOLET
+    1, 3, 7, 9 -> PredictionColor.GREEN
+    else -> PredictionColor.RED
+}
+
+fun digitBigSmallLabel(digit: Int): String = if (digit >= 5) "Big" else "Small"
+
 fun formatCoins(amount: Long): String =
     NumberFormat.getNumberInstance(Locale.US).format(amount)
 
@@ -107,7 +120,7 @@ fun VirtualCoinBalancePill(
         onClick = onClick,
         shape = RoundedCornerShape(50),
         color = ObsidianCardElevated,
-        border = BorderStroke(1.dp, CoinGold.copy(alpha = 0.45f)),
+        border = BorderStroke(1.dp, CoinGold.copy(alpha = 0.55f)),
         modifier = modifier
             .height(40.dp)
             .testTag("wallet_balance_pill")
@@ -136,7 +149,7 @@ fun VirtualCoinBalancePill(
                 fontFamily = JetBrainsMonoFontFamily,
                 fontWeight = FontWeight.SemiBold,
                 fontSize = 10.sp,
-                color = CoinGold.copy(alpha = 0.8f)
+                color = CoinGold.copy(alpha = 0.85f)
             )
         }
     }
@@ -146,7 +159,7 @@ fun VirtualCoinBalancePill(
 fun VirtualDisclaimerBanner(modifier: Modifier = Modifier) {
     Surface(
         shape = RoundedCornerShape(12.dp),
-        color = ObsidianCard.copy(alpha = 0.85f),
+        color = ObsidianCard.copy(alpha = 0.9f),
         border = BorderStroke(1.dp, ObsidianBorder),
         modifier = modifier.fillMaxWidth()
     ) {
@@ -158,7 +171,7 @@ fun VirtualDisclaimerBanner(modifier: Modifier = Modifier) {
             Icon(
                 imageVector = Icons.Filled.Shield,
                 contentDescription = null,
-                tint = CyanPulse,
+                tint = AmberGoldTop,
                 modifier = Modifier.size(16.dp)
             )
             Text(
@@ -172,6 +185,154 @@ fun VirtualDisclaimerBanner(modifier: Modifier = Modifier) {
     }
 }
 
+/**
+ * Glossy 3D WinGo-style numbered ball (0-9) matching the classic casino/lottery sphere look:
+ * - 0: Red + Violet split outer ring
+ * - 5: Green + Violet split outer ring
+ * - 1,3,7,9: Emerald Green ring
+ * - 2,4,6,8: Coral Red ring
+ */
+@Composable
+fun WinGoNumberBall(
+    digit: Int,
+    size: Dp = 48.dp,
+    isSelected: Boolean = false,
+    onClick: (() -> Unit)? = null,
+    modifier: Modifier = Modifier
+) {
+    val primaryColor = when (digit) {
+        0 -> RubyRed
+        5 -> NeonEmerald
+        1, 3, 7, 9 -> NeonEmerald
+        else -> RubyRed
+    }
+    val secondaryColor = when (digit) {
+        0, 5 -> ElectricViolet
+        else -> primaryColor
+    }
+    val numberTextColor = when (digit) {
+        0, 5 -> ElectricViolet
+        1, 3, 7, 9 -> NeonEmerald
+        else -> RubyRed
+    }
+
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = modifier
+            .size(size)
+            .clip(CircleShape)
+            .then(
+                if (isSelected) {
+                    Modifier.border(2.5.dp, AmberGoldTop, CircleShape)
+                } else {
+                    Modifier
+                }
+            )
+            .let { mod -> if (onClick != null) mod.clickable(onClick = onClick) else mod }
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val diameter = this.size.minDimension
+            val radius = diameter / 2f
+            val center = Offset(this.size.width / 2f, this.size.height / 2f)
+
+            // Outer sphere base (split halves for 0 and 5)
+            if (primaryColor != secondaryColor) {
+                drawArc(
+                    color = primaryColor,
+                    startAngle = 135f,
+                    sweepAngle = 180f,
+                    useCenter = true,
+                    topLeft = Offset(0f, 0f),
+                    size = Size(diameter, diameter)
+                )
+                drawArc(
+                    color = secondaryColor,
+                    startAngle = -45f,
+                    sweepAngle = 180f,
+                    useCenter = true,
+                    topLeft = Offset(0f, 0f),
+                    size = Size(diameter, diameter)
+                )
+            } else {
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(primaryColor.copy(alpha = 0.9f), primaryColor),
+                        center = Offset(radius * 0.7f, radius * 0.6f),
+                        radius = radius * 1.2f
+                    ),
+                    radius = radius,
+                    center = center
+                )
+            }
+
+            // Soft metallic ring rim
+            drawCircle(
+                color = Color.White.copy(alpha = 0.28f),
+                radius = radius * 0.94f,
+                center = center,
+                style = androidx.compose.ui.graphics.drawscope.Stroke(width = diameter * 0.045f)
+            )
+
+            // Crisp glossy white center disk
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(Color.White, Color(0xFFE7ECF8)),
+                    center = Offset(radius * 0.85f, radius * 0.75f),
+                    radius = radius * 0.72f
+                ),
+                radius = radius * 0.62f,
+                center = center
+            )
+
+            // Top specular highlight dot
+            drawCircle(
+                color = Color.White.copy(alpha = 0.55f),
+                radius = radius * 0.16f,
+                center = Offset(radius * 0.65f, radius * 0.42f)
+            )
+        }
+
+        Text(
+            text = digit.toString(),
+            fontFamily = JetBrainsMonoFontFamily,
+            fontWeight = FontWeight.ExtraBold,
+            fontSize = (size.value * 0.43f).sp,
+            color = numberTextColor
+        )
+    }
+}
+
+/**
+ * Single or dual WinGo color dot indicator used in History tables (0 = Red+Violet, 5 = Green+Violet).
+ */
+@Composable
+fun WinGoColorDots(
+    digit: Int,
+    dotSize: Dp = 11.dp
+) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        when (digit) {
+            0 -> {
+                Box(modifier = Modifier.size(dotSize).clip(CircleShape).background(RubyRed))
+                Box(modifier = Modifier.size(dotSize).clip(CircleShape).background(ElectricViolet))
+            }
+            5 -> {
+                Box(modifier = Modifier.size(dotSize).clip(CircleShape).background(NeonEmerald))
+                Box(modifier = Modifier.size(dotSize).clip(CircleShape).background(ElectricViolet))
+            }
+            1, 3, 7, 9 -> {
+                Box(modifier = Modifier.size(dotSize).clip(CircleShape).background(NeonEmerald))
+            }
+            else -> {
+                Box(modifier = Modifier.size(dotSize).clip(CircleShape).background(RubyRed))
+            }
+        }
+    }
+}
+
 @Composable
 fun ColorOrbBadge(
     color: PredictionColor,
@@ -179,6 +340,14 @@ fun ColorOrbBadge(
     size: Dp = 32.dp,
     onClick: (() -> Unit)? = null
 ) {
+    if (digit != null) {
+        WinGoNumberBall(
+            digit = digit,
+            size = size,
+            onClick = onClick
+        )
+        return
+    }
     val brush = Brush.radialGradient(
         colors = listOf(color.brightColor(), color.accentColor(), color.deepColor())
     )
@@ -190,39 +359,29 @@ fun ColorOrbBadge(
             .background(brush)
             .border(1.5.dp, Color.White.copy(alpha = 0.25f), CircleShape)
             .let { mod -> if (onClick != null) mod.clickable(onClick = onClick) else mod }
-    ) {
-        if (digit != null) {
-            Text(
-                text = digit.toString(),
-                fontFamily = JetBrainsMonoFontFamily,
-                fontWeight = FontWeight.Bold,
-                fontSize = (size.value * 0.42f).sp,
-                color = Color.White
-            )
-        }
-    }
+    ) {}
 }
 
 @Composable
 fun RoundStatusChip(phase: RoundPhase) {
     val (bg, fg, icon) = when (phase) {
         RoundPhase.ACTIVE -> Triple(
-            NeonEmerald.copy(alpha = 0.16f),
+            NeonEmerald.copy(alpha = 0.18f),
             NeonEmeraldBright,
             Icons.Filled.CheckCircle
         )
         RoundPhase.LOCKED -> Triple(
-            RubyRed.copy(alpha = 0.18f),
+            RubyRed.copy(alpha = 0.20f),
             RubyRedBright,
             Icons.Filled.Lock
         )
         RoundPhase.RESULT_PENDING -> Triple(
-            CoinGold.copy(alpha = 0.18f),
+            CoinGold.copy(alpha = 0.20f),
             CoinGoldSoft,
             Icons.Filled.Verified
         )
         RoundPhase.COMPLETED -> Triple(
-            ElectricViolet.copy(alpha = 0.18f),
+            ElectricViolet.copy(alpha = 0.20f),
             ElectricVioletBright,
             Icons.Filled.Verified
         )
@@ -236,7 +395,7 @@ fun RoundStatusChip(phase: RoundPhase) {
     Surface(
         shape = RoundedCornerShape(50),
         color = bg,
-        border = BorderStroke(1.dp, fg.copy(alpha = 0.4f))
+        border = BorderStroke(1.dp, fg.copy(alpha = 0.45f))
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
@@ -261,6 +420,64 @@ fun RoundStatusChip(phase: RoundPhase) {
 }
 
 @Composable
+fun HowToPlayDialog(onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = ObsidianCard,
+        titleContentColor = TextPrimary,
+        textContentColor = TextSecondary,
+        title = {
+            Text(
+                text = "How To Play ChromaPulse",
+                style = MaterialTheme.typography.titleLarge,
+                color = AmberGoldTop
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = "1. Pick a timed arena (30s, 1 Min, 3 Min, or 5 Min). Each period locks 5 seconds before the timer hits 00:00.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = TextPrimary
+                )
+                Text(
+                    text = "2. Choose Green (2.0x), Red (2.0x), or Violet (4.5x) — or tap any numbered ball (0–9) to pick its matching color:",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = TextPrimary
+                )
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = ObsidianCanvas,
+                    border = BorderStroke(1.dp, ObsidianBorder)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text("• Green: Digits 1, 3, 7, 9 (2.0x VC)", style = MaterialTheme.typography.bodySmall, color = NeonEmeraldBright)
+                        Text("• Red: Digits 2, 4, 6, 8 (2.0x VC)", style = MaterialTheme.typography.bodySmall, color = RubyRedBright)
+                        Text("• Violet: Digits 0, 5 (4.5x VC)", style = MaterialTheme.typography.bodySmall, color = ElectricVioletBright)
+                    }
+                }
+                Text(
+                    text = "3. Every result is deterministically verified with SHA-256. Virtual demo coins only — zero real-money wagering.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextSecondary
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = onDismiss,
+                modifier = Modifier.testTag("how_to_play_close")
+            ) {
+                Text("Got It", color = AmberOrangeMid, fontWeight = FontWeight.Bold)
+            }
+        }
+    )
+}
+
+@Composable
 fun RoundVerificationDialog(
     periodId: String,
     modeTitle: String,
@@ -280,7 +497,7 @@ fun RoundVerificationDialog(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                ColorOrbBadge(color = winningColor, digit = resultDigit, size = 34.dp)
+                WinGoNumberBall(digit = resultDigit, size = 38.dp)
                 Column {
                     Text(
                         text = "Verifiable Round Result",
@@ -299,7 +516,7 @@ fun RoundVerificationDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    text = "Winning Color: ${winningColor.displayName} (Digit #$resultDigit)",
+                    text = "Winning Color: ${winningColor.displayName} (Digit #$resultDigit • ${digitBigSmallLabel(resultDigit)})",
                     style = MaterialTheme.typography.titleMedium,
                     color = winningColor.brightColor()
                 )
@@ -319,7 +536,7 @@ fun RoundVerificationDialog(
                             fontFamily = JetBrainsMonoFontFamily,
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
-                            color = CyanPulse
+                            color = AmberGoldTop
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
@@ -331,7 +548,7 @@ fun RoundVerificationDialog(
                     }
                 }
                 Text(
-                    text = "Every round result is deterministically derived from a canonical UTC period seed using SHA-256 and stored immutably in Cloud Firestore.",
+                    text = "Every round result is deterministically derived from a canonical UTC period seed using SHA-256 and stored immutably on your device.",
                     style = MaterialTheme.typography.bodySmall,
                     color = TextSecondary
                 )
@@ -342,7 +559,7 @@ fun RoundVerificationDialog(
                 onClick = onDismiss,
                 modifier = Modifier.testTag("verification_dialog_close")
             ) {
-                Text("Close", color = ElectricVioletBright)
+                Text("Close", color = AmberOrangeMid, fontWeight = FontWeight.Bold)
             }
         }
     )
@@ -368,9 +585,9 @@ fun EmptyStatePanel(
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                ColorOrbBadge(PredictionColor.RED, size = 14.dp)
-                ColorOrbBadge(PredictionColor.GREEN, size = 14.dp)
-                ColorOrbBadge(PredictionColor.VIOLET, size = 14.dp)
+                WinGoNumberBall(digit = 4, size = 24.dp)
+                WinGoNumberBall(digit = 7, size = 24.dp)
+                WinGoNumberBall(digit = 5, size = 24.dp)
             }
             Spacer(modifier = Modifier.height(4.dp))
             Text(

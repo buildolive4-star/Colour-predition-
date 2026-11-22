@@ -8,12 +8,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.unit.dp
 
 private val ChromaPulseDarkColorScheme = darkColorScheme(
-    primary = ElectricViolet,
+    primary = AmberOrangeMid,
     onPrimary = TextPrimary,
-    primaryContainer = ElectricVioletDeep,
-    onPrimaryContainer = ElectricVioletBright,
+    primaryContainer = RoyalIndigoPill,
+    onPrimaryContainer = TextPrimary,
     secondary = NeonEmerald,
-    onSecondary = ObsidianCanvas,
+    onSecondary = TextPrimary,
     secondaryContainer = NeonEmeraldDeep,
     onSecondaryContainer = NeonEmeraldBright,
     tertiary = CoinGold,

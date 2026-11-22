@@ -70,9 +70,9 @@ import com.example.ui.screens.LeaderboardScreen
 import com.example.ui.screens.NotificationsSheet
 import com.example.ui.screens.ProfileScreen
 import com.example.ui.screens.VirtualWalletSheet
+import com.example.ui.theme.AmberGoldTop
+import com.example.ui.theme.AmberOrangeMid
 import com.example.ui.theme.ChromaPulseTheme
-import com.example.ui.theme.ElectricViolet
-import com.example.ui.theme.ElectricVioletBright
 import com.example.ui.theme.ObsidianCanvas
 import com.example.ui.theme.ObsidianSurface
 import com.example.ui.theme.TextSecondary
@@ -210,9 +210,9 @@ fun ChromaPulseApp() {
                                     )
                                 },
                                 colors = NavigationBarItemDefaults.colors(
-                                    selectedIconColor = Color.White,
-                                    selectedTextColor = ElectricVioletBright,
-                                    indicatorColor = ElectricViolet.copy(alpha = 0.28f),
+                                    selectedIconColor = AmberGoldTop,
+                                    selectedTextColor = AmberGoldTop,
+                                    indicatorColor = AmberOrangeMid.copy(alpha = 0.22f),
                                     unselectedIconColor = TextSecondary,
                                     unselectedTextColor = TextSecondary
                                 ),
@@ -243,9 +243,9 @@ fun ChromaPulseApp() {
                                 },
                                 label = { Text(stringResource(dest.labelRes)) },
                                 colors = NavigationRailItemDefaults.colors(
-                                    selectedIconColor = Color.White,
-                                    selectedTextColor = ElectricVioletBright,
-                                    indicatorColor = ElectricViolet.copy(alpha = 0.28f),
+                                    selectedIconColor = AmberGoldTop,
+                                    selectedTextColor = AmberGoldTop,
+                                    indicatorColor = AmberOrangeMid.copy(alpha = 0.22f),
                                     unselectedIconColor = TextSecondary,
                                     unselectedTextColor = TextSecondary
                                 ),
@@ -282,6 +282,7 @@ fun ChromaPulseApp() {
                                 onOpenNotifications = { showNotificationsSheet = true },
                                 onOpenProfile = { navigateTopLevel(ROUTE_PROFILE) },
                                 onOpenHistory = { navigateTopLevel(ROUTE_HISTORY) },
+                                onOpenLeaderboard = { navigateTopLevel(ROUTE_LEADERBOARD) },
                                 onClaimDailyBonus = { viewModel.claimDailyBonus() }
                             )
                         }
@@ -295,10 +296,12 @@ fun ChromaPulseApp() {
                                 predictions = predictions,
                                 latestBanner = latestBanner,
                                 isSubmitting = isSubmitting,
+                                isClaimingBonus = isClaimingBonus,
                                 onSelectMode = { viewModel.selectMode(it) },
                                 onSubmitPrediction = { mode, color, stake ->
                                     viewModel.submitPrediction(mode, color, stake)
                                 },
+                                onClaimDailyBonus = { viewModel.claimDailyBonus() },
                                 onClaimDemoRefill = { viewModel.claimDemoRefill() },
                                 onDismissBanner = { viewModel.dismissBanner() },
                                 onOpenWallet = { showWalletSheet = true },
