@@ -68,6 +68,9 @@ service cloud.firestore {
              data.currentStreak is int && data.currentStreak >= 0 &&
              data.bestStreak is int && data.bestStreak >= 0 &&
              (!('lastDailyBonusDate' in data) || data.lastDailyBonusDate == null || (data.lastDailyBonusDate is string && data.lastDailyBonusDate.size() <= 20)) &&
+             (!('referredByCode' in data) || data.referredByCode == null || (data.referredByCode is string && data.referredByCode.size() >= 3 && data.referredByCode.size() <= 32)) &&
+             (!('referralCount' in data) || (data.referralCount is int && data.referralCount >= 0 && data.referralCount <= 1000000)) &&
+             (!('referralEarnedCoins' in data) || (data.referralEarnedCoins is int && data.referralEarnedCoins >= 0 && data.referralEarnedCoins <= 100000000)) &&
              data.notifyResults is bool &&
              data.notifyRoundClosing is bool &&
              data.notifyBonuses is bool &&
@@ -102,7 +105,8 @@ service cloud.firestore {
                'PREDICTION_ENTRY', 'PREDICTION_REWARD',
                'MINI_GAME_ENTRY', 'MINI_GAME_REWARD',
                'QR_VOUCHER_REDEEM', 'ADMIN_CREDIT', 'ADMIN_DEBIT',
-               'DEPOSIT_CREDIT', 'WITHDRAWAL_REQUEST', 'WITHDRAWAL_REFUND'
+               'DEPOSIT_CREDIT', 'WITHDRAWAL_REQUEST', 'WITHDRAWAL_REFUND',
+               'REFERRAL_BONUS'
              ] &&
              data.amount is int && data.amount >= -1000000 && data.amount <= 1000000 &&
              data.previousBalance is int && data.previousBalance >= 0 &&
@@ -165,6 +169,10 @@ service cloud.firestore {
              data.updatedAt is timestamp && data.updatedAt <= request.time;
     }
 
+    function isValidForcedDigit(val) {
+      return val == null || (val is int && val >= 0 && val <= 9);
+    }
+
     function isValidAppConfig(data) {
       return data.announcementText is string && data.announcementText.size() >= 1 && data.announcementText.size() <= 240 &&
              data.redGreenMultiplier is number && data.redGreenMultiplier >= 1.1 && data.redGreenMultiplier <= 5.0 &&
@@ -174,6 +182,11 @@ service cloud.firestore {
              data.mode3mEnabled is bool &&
              data.mode5mEnabled is bool &&
              (!('forcedNextColor' in data) || data.forcedNextColor == null || isValidColor(data.forcedNextColor)) &&
+             (!('forced30sDigit' in data) || isValidForcedDigit(data.forced30sDigit)) &&
+             (!('forced60sDigit' in data) || isValidForcedDigit(data.forced60sDigit)) &&
+             (!('forced3mDigit' in data) || isValidForcedDigit(data.forced3mDigit)) &&
+             (!('forced5mDigit' in data) || isValidForcedDigit(data.forced5mDigit)) &&
+             (!('forcedSpinSliceIndex' in data) || data.forcedSpinSliceIndex == null || (data.forcedSpinSliceIndex is int && data.forcedSpinSliceIndex >= 0 && data.forcedSpinSliceIndex <= 7)) &&
              data.adminQrLabel is string && data.adminQrLabel.size() >= 1 && data.adminQrLabel.size() <= 80 &&
              data.adminQrPayload is string && data.adminQrPayload.size() >= 3 && data.adminQrPayload.size() <= 200 &&
              (!('updatedByEmail' in data) || data.updatedByEmail == null || (data.updatedByEmail is string && data.updatedByEmail.size() <= 120)) &&
@@ -240,7 +253,8 @@ service cloud.firestore {
                        incoming().keys().hasOnly([
                          'userId', 'displayName', 'email', 'publicUserId', 'photoUrl', 'virtualCoins',
                          'totalGames', 'totalWins', 'totalVirtualPoints', 'currentStreak', 'bestStreak',
-                         'lastDailyBonusDate', 'notifyResults', 'notifyRoundClosing', 'notifyBonuses',
+                         'lastDailyBonusDate', 'referredByCode', 'referralCount', 'referralEarnedCoins',
+                         'notifyResults', 'notifyRoundClosing', 'notifyBonuses',
                          'accountStatus', 'createdAt', 'updatedAt'
                        ]) &&
                        isValidUserProfile(incoming());
@@ -254,11 +268,12 @@ service cloud.firestore {
                          (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly([
                            'virtualCoins', 'accountStatus', 'updatedAt'
                          ])) ||
-                         // Owner gameplay, profile settings, and bonus updates
+                         // Owner gameplay, profile settings, referral collection, and bonus updates
                          (isOwner(userId) && incoming().accountStatus == existing().accountStatus &&
                            incoming().diff(existing()).affectedKeys().hasOnly([
                              'displayName', 'photoUrl', 'virtualCoins', 'totalGames', 'totalWins',
                              'totalVirtualPoints', 'currentStreak', 'bestStreak', 'lastDailyBonusDate',
+                             'referredByCode', 'referralCount', 'referralEarnedCoins',
                              'notifyResults', 'notifyRoundClosing', 'notifyBonuses', 'updatedAt'
                            ])
                          )
@@ -432,7 +447,9 @@ service cloud.firestore {
                        incoming().keys().hasOnly([
                          'announcementText', 'redGreenMultiplier', 'violetMultiplier',
                          'mode30sEnabled', 'mode60sEnabled', 'mode3mEnabled', 'mode5mEnabled',
-                         'forcedNextColor', 'adminQrLabel', 'adminQrPayload', 'updatedByEmail', 'updatedAt'
+                         'forcedNextColor', 'forced30sDigit', 'forced60sDigit', 'forced3mDigit',
+                         'forced5mDigit', 'forcedSpinSliceIndex',
+                         'adminQrLabel', 'adminQrPayload', 'updatedByEmail', 'updatedAt'
                        ]) &&
                        isValidAppConfig(incoming());
 
@@ -442,7 +459,9 @@ service cloud.firestore {
                        incoming().diff(existing()).affectedKeys().hasOnly([
                          'announcementText', 'redGreenMultiplier', 'violetMultiplier',
                          'mode30sEnabled', 'mode60sEnabled', 'mode3mEnabled', 'mode5mEnabled',
-                         'forcedNextColor', 'adminQrLabel', 'adminQrPayload', 'updatedByEmail', 'updatedAt'
+                         'forcedNextColor', 'forced30sDigit', 'forced60sDigit', 'forced3mDigit',
+                         'forced5mDigit', 'forcedSpinSliceIndex',
+                         'adminQrLabel', 'adminQrPayload', 'updatedByEmail', 'updatedAt'
                        ]);
 
       allow delete: if false;
@@ -605,6 +624,92 @@ service cloud.firestore {
                        incoming().diff(existing()).affectedKeys().hasOnly([
                          'status', 'adminNote', 'processedByEmail', 'updatedAt'
                        ]);
+
+      allow delete: if false;
+    }
+
+    // ---- Shareable Referral Code Index (Exact-code lookup, no PII list) ----
+    function isValidReferralCode(data) {
+      return data.code is string && data.code.size() >= 3 && data.code.size() <= 32 && data.code.matches('^[A-Z0-9\\-]+$') &&
+             data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128 &&
+             data.ownerName is string && data.ownerName.size() >= 1 && data.ownerName.size() <= 60 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    match /referral_codes/{code} {
+      allow get: if isSignedIn() && isValidId(code);
+      allow list: if isAdmin();
+
+      allow create: if isSignedIn() &&
+                       isValidId(code) &&
+                       incoming().code == code &&
+                       incoming().ownerUid == request.auth.uid &&
+                       incoming().keys().hasAll(['code', 'ownerUid', 'ownerName', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['code', 'ownerUid', 'ownerName', 'createdAt', 'updatedAt']) &&
+                       isValidReferralCode(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(code) &&
+                       existing().ownerUid == request.auth.uid &&
+                       incoming().ownerUid == existing().ownerUid &&
+                       incoming().code == existing().code &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['ownerName', 'updatedAt']) &&
+                       isValidReferralCode(incoming());
+
+      allow delete: if isSuperAdmin() && isValidId(code);
+    }
+
+    // ---- One-Time Referral Claims (+500 VC Welcome & Collectible Referrer Bonus) ----
+    function isValidReferralClaim(data) {
+      return data.referredUid is string && data.referredUid.size() >= 1 && data.referredUid.size() <= 128 &&
+             data.referredName is string && data.referredName.size() >= 1 && data.referredName.size() <= 60 &&
+             data.referrerUid is string && data.referrerUid.size() >= 1 && data.referrerUid.size() <= 128 &&
+             data.referrerCode is string && data.referrerCode.size() >= 3 && data.referrerCode.size() <= 32 &&
+             data.referrerName is string && data.referrerName.size() >= 1 && data.referrerName.size() <= 60 &&
+             data.bonusCoins is int && data.bonusCoins == 500 &&
+             data.referrerRewardClaimed is bool &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    match /referrals/{referredUid} {
+      allow get: if isSignedIn() && isValidId(referredUid) && (
+        isOwner(referredUid) || resource.data.referrerUid == request.auth.uid || isAdmin()
+      );
+      allow list: if isAdmin() || (isSignedIn() && resource.data.referrerUid == request.auth.uid);
+
+      allow create: if isOwner(referredUid) &&
+                       isValidId(referredUid) &&
+                       incoming().referredUid == request.auth.uid &&
+                       incoming().referrerUid != request.auth.uid &&
+                       incoming().bonusCoins == 500 &&
+                       incoming().referrerRewardClaimed == false &&
+                       exists(/databases/$(database)/documents/referral_codes/$(incoming().referrerCode)) &&
+                       get(/databases/$(database)/documents/referral_codes/$(incoming().referrerCode)).data.ownerUid == incoming().referrerUid &&
+                       incoming().keys().hasAll([
+                         'referredUid', 'referredName', 'referrerUid', 'referrerCode',
+                         'referrerName', 'bonusCoins', 'referrerRewardClaimed', 'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'referredUid', 'referredName', 'referrerUid', 'referrerCode',
+                         'referrerName', 'bonusCoins', 'referrerRewardClaimed', 'createdAt', 'updatedAt'
+                       ]) &&
+                       isValidReferralClaim(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(referredUid) &&
+                       existing().referrerUid == request.auth.uid &&
+                       existing().referrerRewardClaimed == false &&
+                       incoming().referrerRewardClaimed == true &&
+                       incoming().referredUid == existing().referredUid &&
+                       incoming().referrerUid == existing().referrerUid &&
+                       incoming().referrerCode == existing().referrerCode &&
+                       incoming().bonusCoins == existing().bonusCoins &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['referrerRewardClaimed', 'updatedAt']) &&
+                       isValidReferralClaim(incoming());
 
       allow delete: if false;
     }

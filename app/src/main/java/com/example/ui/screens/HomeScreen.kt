@@ -107,9 +107,11 @@ fun HomeScreen(
     recentOutcomesByMode: Map<GameMode, List<VerifiableRoundOutcome>>,
     predictions: List<PredictionRecord>,
     unreadNotificationsCount: Int,
+    pendingReferralsCount: Int = 0,
     isClaimingBonus: Boolean,
     onOpenGameMode: (GameMode) -> Unit,
     onOpenMiniGame: (Int) -> Unit,
+    onOpenPromotion: () -> Unit,
     onOpenQrCenter: () -> Unit,
     onOpenAdminPanel: () -> Unit,
     onOpenWallet: () -> Unit,
@@ -408,6 +410,95 @@ fun HomeScreen(
                     gradient = listOf(RubyRed, Color(0xFFD93654)),
                     onClick = onOpenQrCenter
                 )
+            }
+        }
+
+        // ShreeWin-Style Refer Friends & Earn +500 VC Promotion Banner
+        item {
+            Surface(
+                onClick = onOpenPromotion,
+                shape = RoundedCornerShape(20.dp),
+                border = BorderStroke(
+                    1.5.dp,
+                    if (pendingReferralsCount > 0) NeonEmerald else AmberGoldTop.copy(alpha = 0.7f)
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("home_promotion_referral_banner")
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(
+                            Brush.horizontalGradient(
+                                listOf(ElectricViolet, Color(0xFF3B1D8F), AmberOrangeDeep)
+                            )
+                        )
+                        .padding(horizontal = 16.dp, vertical = 14.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .clip(CircleShape)
+                                    .background(AmberGoldTop.copy(alpha = 0.25f))
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.CardGiftcard,
+                                    contentDescription = null,
+                                    tint = AmberGoldTop,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            }
+                            Column {
+                                Text(
+                                    text = "REFER FRIENDS & EARN",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = CoinGoldSoft
+                                )
+                                Text(
+                                    text = "+500 VC Collect Per Friend",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = Color.White
+                                )
+                                Text(
+                                    text = if (pendingReferralsCount > 0) {
+                                        "$pendingReferralsCount reward(s) ready to collect now!"
+                                    } else {
+                                        "Generate Promotion Link & share code"
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (pendingReferralsCount > 0) NeonEmeraldBright else Color.White.copy(alpha = 0.85f)
+                                )
+                            }
+                        }
+
+                        Surface(
+                            shape = RoundedCornerShape(50),
+                            color = if (pendingReferralsCount > 0) NeonEmerald else AmberGoldTop
+                        ) {
+                            Text(
+                                text = if (pendingReferralsCount > 0) "Collect" else "Invite",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = if (pendingReferralsCount > 0) Color.White else ObsidianCanvas,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
+                            )
+                        }
+                    }
+                }
             }
         }
 

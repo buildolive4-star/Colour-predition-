@@ -876,7 +876,12 @@ fun GameArenaScreen(
                     .padding(horizontal = 14.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                listOf("Game history", "Chart", "My history").forEachIndexed { idx, label ->
+                val myHistoryLabel = if (modePredictions.isNotEmpty()) {
+                    "My history (${modePredictions.size})"
+                } else {
+                    "My history"
+                }
+                listOf("Game history", "Chart", myHistoryLabel).forEachIndexed { idx, label ->
                     val isSelected = bottomTab == idx
                     Box(
                         contentAlignment = Alignment.Center,

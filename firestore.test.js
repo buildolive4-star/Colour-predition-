@@ -464,3 +464,124 @@ test("Multi-bet predictions (Color, Number, Big/Small) and Deposit/Withdrawal wa
   );
 });
 
+test("7. Admin per-arena forced digits + Spin Wheel control + Referral +500 VC Collect rules", async () => {
+  const superDb = testEnv
+    .authenticatedContext(SUPER_ADMIN_UID, {
+      email: SUPER_ADMIN_EMAIL,
+      email_verified: true,
+    })
+    .firestore();
+  const aliceDb = testEnv
+    .authenticatedContext(ALICE_UID, {
+      email: "alice@example.com",
+      email_verified: true,
+    })
+    .firestore();
+  const bobDb = testEnv
+    .authenticatedContext(BOB_UID, {
+      email: "bob@example.com",
+      email_verified: true,
+    })
+    .firestore();
+
+  const ts = nowPast(3000);
+
+  // Super Admin sets exact next digit 5 for 30s, 8 for 60s, and Spin Wheel slice 3 (500 VC)
+  await assertSucceeds(
+    superDb.collection("app_config").doc("global").set({
+      announcementText: "Live test announcement",
+      redGreenMultiplier: 2.0,
+      violetMultiplier: 4.5,
+      mode30sEnabled: true,
+      mode60sEnabled: true,
+      mode3mEnabled: true,
+      mode5mEnabled: true,
+      forced30sDigit: 5,
+      forced60sDigit: 8,
+      forced3mDigit: null,
+      forced5mDigit: null,
+      forcedSpinSliceIndex: 3,
+      adminQrLabel: "ChromaPulse Counter",
+      adminQrPayload: "admin@ybl",
+      updatedByEmail: SUPER_ADMIN_EMAIL,
+      updatedAt: ts,
+    })
+  );
+
+  // Regular player CANNOT modify app_config forced digits
+  await assertFails(
+    aliceDb.collection("app_config").doc("global").update({
+      forced30sDigit: 9,
+      updatedAt: nowPast(1000),
+    })
+  );
+
+  // Alice registers her shareable referral code CP-ALICE1
+  await assertSucceeds(
+    aliceDb.collection("referral_codes").doc("CP-ALICE1").set({
+      code: "CP-ALICE1",
+      ownerUid: ALICE_UID,
+      ownerName: "Alice Star",
+      createdAt: ts,
+      updatedAt: ts,
+    })
+  );
+
+  // Alice CANNOT refer herself
+  await assertFails(
+    aliceDb.collection("referrals").doc(ALICE_UID).set({
+      referredUid: ALICE_UID,
+      referredName: "Alice Star",
+      referrerUid: ALICE_UID,
+      referrerCode: "CP-ALICE1",
+      referrerName: "Alice Star",
+      bonusCoins: 500,
+      referrerRewardClaimed: false,
+      createdAt: ts,
+      updatedAt: ts,
+    })
+  );
+
+  // Bob applies Alice's code CP-ALICE1 to claim +500 VC welcome bonus
+  await assertSucceeds(
+    bobDb.collection("referrals").doc(BOB_UID).set({
+      referredUid: BOB_UID,
+      referredName: "Bob Runner",
+      referrerUid: ALICE_UID,
+      referrerCode: "CP-ALICE1",
+      referrerName: "Alice Star",
+      bonusCoins: 500,
+      referrerRewardClaimed: false,
+      createdAt: ts,
+      updatedAt: ts,
+    })
+  );
+
+  // Bob CANNOT list Alice's referrals or collect Alice's reward
+  await assertFails(bobDb.collection("referrals").where("referrerUid", "==", ALICE_UID).get());
+  await assertFails(
+    bobDb.collection("referrals").doc(BOB_UID).update({
+      referrerRewardClaimed: true,
+      updatedAt: nowPast(1000),
+    })
+  );
+
+  // Alice CAN list her own referrals and collect her +500 VC reward once
+  await assertSucceeds(aliceDb.collection("referrals").where("referrerUid", "==", ALICE_UID).get());
+  await assertSucceeds(
+    aliceDb.collection("referrals").doc(BOB_UID).update({
+      referrerRewardClaimed: true,
+      updatedAt: nowPast(1000),
+    })
+  );
+
+  // Alice CANNOT re-collect the same referral twice
+  await assertFails(
+    aliceDb.collection("referrals").doc(BOB_UID).update({
+      referrerRewardClaimed: true,
+      updatedAt: nowPast(500),
+    })
+  );
+});
+
+

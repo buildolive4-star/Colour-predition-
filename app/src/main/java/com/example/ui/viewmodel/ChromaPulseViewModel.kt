@@ -11,6 +11,7 @@ import com.example.data.CoAdminInviteEntity
 import com.example.data.GameRoundRecord
 import com.example.data.LeaderboardEntry
 import com.example.data.PredictionRecord
+import com.example.data.ReferralClaimEntity
 import com.example.data.UserNotification
 import com.example.data.UserProfile
 import com.example.data.VirtualVoucherEntity
@@ -40,6 +41,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.retryWhen
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -76,7 +78,7 @@ class ChromaPulseViewModel(
     val activeRounds: StateFlow<Map<GameMode, ActiveRoundSnapshot>> = _activeRounds.asStateFlow()
 
     private val _recentOutcomesByMode = MutableStateFlow(buildRecentOutcomesMap(System.currentTimeMillis()))
-    val recentOutcomesByMode: StateFlow<Map<GameMode, List<VerifiableRoundOutcome>>> = _recentOutcomesByMode.asStateFlow()
+    private val _localAuthoritativeOutcomes = MutableStateFlow<Map<String, VerifiableRoundOutcome>>(emptyMap())
 
     private val _latestBanner = MutableStateFlow<RoundSettlementBanner?>(null)
     val latestBanner: StateFlow<RoundSettlementBanner?> = _latestBanner.asStateFlow()
@@ -114,9 +116,52 @@ class ChromaPulseViewModel(
         repository.observeGameRounds()
             .toUiStateFlow("Failed to load round history")
 
+    // Authoritative recent outcomes per mode: merges Cloud Firestore game_rounds + instant local overrides
+    // so Admin's forced number (0-9) matches 100% across WinGo Game History, Chart, Last-5 Balls, and Settlement!
+    val recentOutcomesByMode: StateFlow<Map<GameMode, List<VerifiableRoundOutcome>>> =
+        combine(_recentOutcomesByMode, gameRoundsState, _localAuthoritativeOutcomes) { baseMap, roundsUi, localOverrides ->
+            val cloudByDocId = (roundsUi as? UiState.Success)?.data
+                .orEmpty()
+                .associateBy { rec ->
+                    rec.id.ifBlank { "${rec.modeId}_${rec.periodId}" }
+                }
+            baseMap.mapValues { (_, list) ->
+                list.map { item ->
+                    val cloudRec = cloudByDocId[item.roundDocId]
+                    val localRec = localOverrides[item.roundDocId]
+                    when {
+                        cloudRec != null -> {
+                            val digit = cloudRec.resultDigit.toInt().coerceIn(0, 9)
+                            val color = PredictionColor.fromRaw(cloudRec.winningColor)
+                            item.copy(
+                                winningColor = color,
+                                resultDigit = digit,
+                                resultHash = cloudRec.resultHash.ifBlank { item.resultHash }
+                            )
+                        }
+                        localRec != null -> localRec
+                        else -> item
+                    }
+                }
+            }
+        }.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+            initialValue = _recentOutcomesByMode.value
+        )
+
     val leaderboardState: StateFlow<UiState<List<LeaderboardEntry>>> =
         repository.observeLeaderboard()
             .toUiStateFlow("Failed to load leaderboard")
+
+    val myReferralsState: StateFlow<List<ReferralClaimEntity>> =
+        repository.observeMyReferrals(currentUserId)
+            .catchFirestoreError(emptyList())
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+                initialValue = emptyList()
+            )
 
     val appConfigState: StateFlow<AppConfigEntity> =
         repository.observeAppConfig()
@@ -237,7 +282,19 @@ class ChromaPulseViewModel(
     }
 
     private fun <T> Flow<T>.toUiStateFlow(fallbackMessage: String): StateFlow<UiState<T>> =
-        this.map<T, UiState<T>> { UiState.Success(it) }
+        this.retryWhen { cause, attempt ->
+            val firestoreError = generateSequence(cause) { it.cause }
+                .filterIsInstance<FirebaseFirestoreException>()
+                .firstOrNull()
+            if (firestoreError == null && cause is CancellationException) {
+                false
+            } else {
+                Log.w(TAG, "$fallbackMessage (retry #${attempt + 1})", firestoreError ?: cause)
+                delay((1500L * (attempt + 1).coerceAtMost(4)))
+                true
+            }
+        }
+            .map<T, UiState<T>> { UiState.Success(it) }
             .catch { error ->
                 val firestoreError = generateSequence(error) { it.cause }
                     .filterIsInstance<FirebaseFirestoreException>()
@@ -254,14 +311,28 @@ class ChromaPulseViewModel(
             )
 
     private fun <T> Flow<T>.catchFirestoreError(fallback: T): Flow<T> =
-        this.catch { error ->
-            val firestoreError = generateSequence(error) { it.cause }
+        this.retryWhen { cause, attempt ->
+            val firestoreError = generateSequence(cause) { it.cause }
                 .filterIsInstance<FirebaseFirestoreException>()
                 .firstOrNull()
-            if (firestoreError == null && error is CancellationException) throw error
-            Log.w(TAG, "Stream fallback triggered", firestoreError ?: error)
-            emit(fallback)
+            if (firestoreError == null && cause is CancellationException) {
+                false
+            } else if (attempt < 5) {
+                Log.w(TAG, "Stream transient retry #${attempt + 1}", firestoreError ?: cause)
+                delay(2000L)
+                true
+            } else {
+                false
+            }
         }
+            .catch { error ->
+                val firestoreError = generateSequence(error) { it.cause }
+                    .filterIsInstance<FirebaseFirestoreException>()
+                    .firstOrNull()
+                if (firestoreError == null && error is CancellationException) throw error
+                Log.w(TAG, "Stream fallback triggered", firestoreError ?: error)
+                emit(fallback)
+            }
 
     private fun initializeCloudPlayerAndEngine() {
         viewModelScope.launch {
@@ -275,7 +346,7 @@ class ChromaPulseViewModel(
                 val active = ColorPredictionEngine.computeActiveRound(mode, now)
                 lastPeriodByMode[mode] = active.periodId
                 val prev = ColorPredictionEngine.computePreviousCompletedRound(mode, now)
-                publishRoundIfNeeded(prev)
+                publishRoundIfNeeded(prev, applyAdminConfig = false)
             }
         }
 
@@ -288,6 +359,7 @@ class ChromaPulseViewModel(
         }
 
         viewModelScope.launch {
+            var tickCount = 0
             while (isActive) {
                 val now = System.currentTimeMillis()
                 val nextActive = buildActiveRoundsMap(now)
@@ -301,9 +373,15 @@ class ChromaPulseViewModel(
                         periodChanged = true
                         lastPeriodByMode[mode] = currentPeriod
                         val completedOutcome = ColorPredictionEngine.computePreviousCompletedRound(mode, now)
-                        launch { publishRoundIfNeeded(completedOutcome) }
-                        if (mode == _selectedMode.value) {
-                            showRoundResultBanner(completedOutcome)
+                        launch {
+                            val authoritative = publishRoundIfNeeded(completedOutcome, applyAdminConfig = true)
+                            _localAuthoritativeOutcomes.value =
+                                _localAuthoritativeOutcomes.value + (authoritative.roundDocId to authoritative)
+                            if (mode == _selectedMode.value) {
+                                showRoundResultBanner(authoritative)
+                            }
+                            val latestPreds = (predictionsState.value as? UiState.Success)?.data.orEmpty()
+                            settleDuePredictions(latestPreds, System.currentTimeMillis())
                         }
                     } else if (previousPeriod == null) {
                         lastPeriodByMode[mode] = currentPeriod
@@ -312,8 +390,15 @@ class ChromaPulseViewModel(
 
                 if (periodChanged) {
                     _recentOutcomesByMode.value = buildRecentOutcomesMap(now)
+                }
+
+                // Periodic safety sweep every ~2 seconds so no PENDING bet ever remains unsettled
+                tickCount++
+                if (periodChanged || tickCount % 8 == 0) {
                     val preds = (predictionsState.value as? UiState.Success)?.data.orEmpty()
-                    settleDuePredictions(preds, now)
+                    if (preds.any { it.status == "PENDING" }) {
+                        settleDuePredictions(preds, now)
+                    }
                 }
 
                 delay(250L)
@@ -321,9 +406,22 @@ class ChromaPulseViewModel(
         }
     }
 
-    private suspend fun publishRoundIfNeeded(outcome: VerifiableRoundOutcome) {
-        if (!publishedRoundIds.add(outcome.roundDocId)) return
-        repository.recordCompletedRoundIfAbsent(outcome)
+    private suspend fun publishRoundIfNeeded(
+        outcome: VerifiableRoundOutcome,
+        applyAdminConfig: Boolean = true
+    ): VerifiableRoundOutcome {
+        val localExisting = _localAuthoritativeOutcomes.value[outcome.roundDocId]
+        if (localExisting != null) return localExisting
+        if (!publishedRoundIds.add(outcome.roundDocId)) {
+            return repository.resolveEffectiveOutcome(outcome, appConfigState.value)
+        }
+        val result = repository.recordCompletedRoundIfAbsent(outcome, applyAdminConfig = applyAdminConfig)
+        val effective = result.getOrElse {
+            publishedRoundIds.remove(outcome.roundDocId)
+            if (applyAdminConfig) repository.resolveEffectiveOutcome(outcome, appConfigState.value) else outcome
+        }
+        _localAuthoritativeOutcomes.value = _localAuthoritativeOutcomes.value + (effective.roundDocId to effective)
+        return effective
     }
 
     private fun settleDuePredictions(predictions: List<PredictionRecord>, nowMs: Long) {
@@ -348,25 +446,27 @@ class ChromaPulseViewModel(
 
             viewModelScope.launch {
                 val startMs = endMs - mode.durationMs
-                val outcome = ColorPredictionEngine.generateVerifiableOutcomeForPeriod(
+                val baseOutcome = ColorPredictionEngine.generateVerifiableOutcomeForPeriod(
                     mode = mode,
                     periodId = firstPred.periodId,
                     startTimeMs = startMs,
                     endTimeMs = endMs
                 )
-                publishRoundIfNeeded(outcome)
+                val authoritativeOutcome = publishRoundIfNeeded(baseOutcome, applyAdminConfig = true)
 
                 var totalReward = 0L
-                var finalOutcome = outcome
+                var finalOutcome = authoritativeOutcome
                 var anySuccess = false
 
                 for (pred in toSettle) {
                     val key = pred.id.ifBlank { "${mode.id}_${pred.periodId}" }
-                    repository.settlePrediction(pred, outcome)
+                    repository.settlePrediction(pred, authoritativeOutcome)
                         .onSuccess { (reward, effectiveOutcome) ->
                             totalReward += reward
                             finalOutcome = effectiveOutcome
                             anySuccess = true
+                            _localAuthoritativeOutcomes.value =
+                                _localAuthoritativeOutcomes.value + (effectiveOutcome.roundDocId to effectiveOutcome)
                         }
                         .onFailure {
                             settlingIds.remove(key)
@@ -692,6 +792,57 @@ class ChromaPulseViewModel(
 
     fun deleteNotification(notificationId: String) {
         viewModelScope.launch { repository.deleteNotification(notificationId) }
+    }
+
+    // ---- Promotion & Referral Program (+500 VC Collect) ----
+
+    fun applyReferralCode(rawInput: String, onSuccess: (String) -> Unit = {}) {
+        viewModelScope.launch {
+            repository.applyReferralCode(rawInput)
+                .onSuccess { referrerName ->
+                    _snackbarMessages.tryEmit("+500 VC Referral Bonus credited! Invited by $referrerName.")
+                    onSuccess(referrerName)
+                }
+                .onFailure { err ->
+                    _snackbarMessages.tryEmit(err.localizedMessage ?: "Unable to apply referral code.")
+                }
+        }
+    }
+
+    fun collectReferralBonus(referredUid: String, onCollected: (Long) -> Unit = {}) {
+        viewModelScope.launch {
+            repository.collectReferralBonus(referredUid)
+                .onSuccess { bonus ->
+                    _snackbarMessages.tryEmit("Collected +$bonus VC referral bonus!")
+                    onCollected(bonus)
+                }
+                .onFailure { err ->
+                    _snackbarMessages.tryEmit(err.localizedMessage ?: "Unable to collect referral reward.")
+                }
+        }
+    }
+
+    fun collectAllReferralBonuses(onCollected: (Long) -> Unit = {}) {
+        val pendingUids = myReferralsState.value
+            .filter { !it.referrerRewardClaimed }
+            .map { it.referredUid.ifBlank { it.id } }
+            .filter { it.isNotBlank() }
+        if (pendingUids.isEmpty()) {
+            _snackbarMessages.tryEmit("No pending referral rewards to collect right now.")
+            return
+        }
+        viewModelScope.launch {
+            var total = 0L
+            for (uid in pendingUids) {
+                repository.collectReferralBonus(uid).onSuccess { bonus -> total += bonus }
+            }
+            if (total > 0L) {
+                _snackbarMessages.tryEmit("Collected +$total VC from ${pendingUids.size} referral(s)!")
+                onCollected(total)
+            } else {
+                _snackbarMessages.tryEmit("Unable to collect referral bonuses right now.")
+            }
+        }
     }
 
     private companion object {

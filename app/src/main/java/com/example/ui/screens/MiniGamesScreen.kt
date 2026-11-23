@@ -138,6 +138,7 @@ private val WHEEL_SLICES = listOf(
 fun MiniGamesScreen(
     initialGameTab: Int = 0,
     profile: UserProfile?,
+    forcedSpinSliceIndex: Int? = null,
     onPlayMiniGameRound: (gameTitle: String, stakeCoins: Long, rewardCoins: Long, summary: String) -> Unit,
     onOpenWallet: () -> Unit,
     onBack: () -> Unit
@@ -230,6 +231,7 @@ fun MiniGamesScreen(
                 when (selectedGame) {
                     0 -> LuckySpinWheelGame(
                         availableCoins = availableCoins,
+                        forcedSpinSliceIndex = forcedSpinSliceIndex,
                         onFinishSpin = { stake, reward, label ->
                             onPlayMiniGameRound("Lucky Spin", stake, reward, "Wheel landed on $label")
                         }
@@ -255,6 +257,7 @@ fun MiniGamesScreen(
 @Composable
 private fun LuckySpinWheelGame(
     availableCoins: Long,
+    forcedSpinSliceIndex: Int? = null,
     onFinishSpin: (stake: Long, reward: Long, sliceLabel: String) -> Unit
 ) {
     val haptic = LocalHapticFeedback.current
@@ -299,7 +302,8 @@ private fun LuckySpinWheelGame(
             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
             isSpinning = true
             scope.launch {
-                val winningIndex = Random.nextInt(WHEEL_SLICES.size)
+                val winningIndex = forcedSpinSliceIndex?.takeIf { it in WHEEL_SLICES.indices }
+                    ?: Random.nextInt(WHEEL_SLICES.size)
                 val sliceAngle = 360f / WHEEL_SLICES.size
                 val currentMod = ((rotation.value % 360f) + 360f) % 360f
                 val desiredAngle = (360f - (winningIndex * sliceAngle)) % 360f

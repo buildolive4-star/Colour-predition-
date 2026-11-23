@@ -17,6 +17,9 @@
         "currentStreak": { "type": "number", "description": "Current winning streak." },
         "bestStreak": { "type": "number", "description": "Best winning streak achieved." },
         "lastDailyBonusDate": { "type": "string", "description": "Optional UTC ISO date of last daily virtual coin bonus." },
+        "referredByCode": { "type": "string", "description": "Optional referral code applied by this player." },
+        "referralCount": { "type": "number", "description": "Count of collected friend referrals." },
+        "referralEarnedCoins": { "type": "number", "description": "Total virtual coins collected from referrals." },
         "notifyResults": { "type": "boolean", "description": "Whether round settlement notifications are enabled." },
         "notifyRoundClosing": { "type": "boolean", "description": "Whether round closing alerts are enabled." },
         "notifyBonuses": { "type": "boolean", "description": "Whether bonus notifications are enabled." },
@@ -58,7 +61,7 @@
         "userId": { "type": "string" },
         "txType": {
           "type": "string",
-          "enum": ["WELCOME_BONUS", "DAILY_BONUS", "DEMO_REFILL", "PREDICTION_ENTRY", "PREDICTION_REWARD", "MINI_GAME_ENTRY", "MINI_GAME_REWARD", "QR_VOUCHER_REDEEM", "ADMIN_CREDIT", "ADMIN_DEBIT", "DEPOSIT_CREDIT", "WITHDRAWAL_REQUEST", "WITHDRAWAL_REFUND"]
+          "enum": ["WELCOME_BONUS", "DAILY_BONUS", "DEMO_REFILL", "PREDICTION_ENTRY", "PREDICTION_REWARD", "MINI_GAME_ENTRY", "MINI_GAME_REWARD", "QR_VOUCHER_REDEEM", "ADMIN_CREDIT", "ADMIN_DEBIT", "DEPOSIT_CREDIT", "WITHDRAWAL_REQUEST", "WITHDRAWAL_REFUND", "REFERRAL_BONUS"]
         },
         "amount": { "type": "number" },
         "previousBalance": { "type": "number" },
@@ -134,6 +137,11 @@
         "mode3mEnabled": { "type": "boolean" },
         "mode5mEnabled": { "type": "boolean" },
         "forcedNextColor": { "type": "string", "enum": ["RED", "GREEN", "VIOLET"] },
+        "forced30sDigit": { "type": "number" },
+        "forced60sDigit": { "type": "number" },
+        "forced3mDigit": { "type": "number" },
+        "forced5mDigit": { "type": "number" },
+        "forcedSpinSliceIndex": { "type": "number" },
         "adminQrLabel": { "type": "string" },
         "adminQrPayload": { "type": "string" },
         "updatedByEmail": { "type": "string" },
@@ -222,6 +230,36 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["userId", "userName", "userEmail", "publicUserId", "requestType", "amountCoins", "paymentMethod", "paymentDetails", "status", "createdAt", "updatedAt"]
+    },
+    "ReferralCode": {
+      "title": "ReferralCode",
+      "description": "Public shareable referral code mapping to a player UID (no PII).",
+      "type": "object",
+      "properties": {
+        "code": { "type": "string" },
+        "ownerUid": { "type": "string" },
+        "ownerName": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["code", "ownerUid", "ownerName", "createdAt", "updatedAt"]
+    },
+    "ReferralClaim": {
+      "title": "ReferralClaim",
+      "description": "One-time referral claim record granting +500 VC welcome bonus to invitee and collectible +500 VC reward to referrer.",
+      "type": "object",
+      "properties": {
+        "referredUid": { "type": "string" },
+        "referredName": { "type": "string" },
+        "referrerUid": { "type": "string" },
+        "referrerCode": { "type": "string" },
+        "referrerName": { "type": "string" },
+        "bonusCoins": { "type": "number" },
+        "referrerRewardClaimed": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["referredUid", "referredName", "referrerUid", "referrerCode", "referrerName", "bonusCoins", "referrerRewardClaimed", "createdAt", "updatedAt"]
     }
   },
   "firestore": {
@@ -272,6 +310,14 @@
     "/wallet_requests/{requestId}": {
       "schema": { "$ref": "#/entities/WalletRequest" },
       "description": "User deposit & withdrawal requests processed and verified by Main Admin or Co-Admin."
+    },
+    "/referral_codes/{code}": {
+      "schema": { "$ref": "#/entities/ReferralCode" },
+      "description": "Exact-match shareable referral code index."
+    },
+    "/referrals/{referredUid}": {
+      "schema": { "$ref": "#/entities/ReferralClaim" },
+      "description": "One-time referral claim documents for +500 VC collection."
     }
   }
 }

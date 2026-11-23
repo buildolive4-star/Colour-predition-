@@ -120,11 +120,7 @@ object ColorPredictionEngine {
         val combined = (firstByteUnsigned * 256) + secondByteUnsigned
         val digit = combined % 10
 
-        val winningColor = when (digit) {
-            0, 5 -> PredictionColor.VIOLET
-            1, 3, 7, 9 -> PredictionColor.GREEN
-            else -> PredictionColor.RED
-        }
+        val winningColor = digitToColor(digit)
 
         return VerifiableRoundOutcome(
             mode = mode,
@@ -136,6 +132,12 @@ object ColorPredictionEngine {
             resultDigit = digit,
             resultHash = hexHash
         )
+    }
+
+    fun digitToColor(digit: Int): PredictionColor = when (digit) {
+        0, 5 -> PredictionColor.VIOLET
+        1, 3, 7, 9 -> PredictionColor.GREEN
+        else -> PredictionColor.RED
     }
 
     fun parsePeriodEndTimeMs(mode: GameMode, periodId: String): Long? {

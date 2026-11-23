@@ -66,6 +66,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.AdminAuditLogEntity
@@ -75,8 +76,12 @@ import com.example.data.CoAdminInviteEntity
 import com.example.data.UserProfile
 import com.example.data.VirtualVoucherEntity
 import com.example.data.WalletRequestEntity
+import com.example.domain.ColorPredictionEngine
+import com.example.domain.GameMode
 import com.example.security.PasswordHasher
 import com.example.ui.components.QrMatrixCanvas
+import com.example.ui.components.WinGoNumberBall
+import com.example.ui.components.digitBigSmallLabel
 import com.example.ui.components.formatCoins
 import com.example.ui.components.formatTimestamp
 import com.example.ui.theme.AmberGoldTop
@@ -198,20 +203,26 @@ fun AdminPanelScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
                     IconButton(onClick = onBack, modifier = Modifier.testTag("admin_back_button")) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = TextPrimary)
                     }
-                    Column {
+                    Column(modifier = Modifier.weight(1f)) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             Text(
                                 text = if (isSuperAdmin) "Main Admin Console" else "Co-Admin Console",
-                                style = MaterialTheme.typography.titleLarge,
+                                style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.ExtraBold,
-                                color = AmberGoldTop
+                                color = AmberGoldTop,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false)
                             )
                             Surface(
                                 shape = RoundedCornerShape(6.dp),
@@ -228,9 +239,11 @@ fun AdminPanelScreen(
                             }
                         }
                         Text(
-                            text = "Cloud Synced • Firebase Live Engine & Team Controls",
+                            text = "Cloud Synced • Live Engine & Team Controls",
                             style = MaterialTheme.typography.bodySmall,
-                            color = TextSecondary
+                            color = TextSecondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
@@ -239,8 +252,8 @@ fun AdminPanelScreen(
                     contentDescription = null,
                     tint = NeonEmeraldBright,
                     modifier = Modifier
-                        .padding(end = 12.dp)
-                        .size(28.dp)
+                        .padding(start = 6.dp, end = 10.dp)
+                        .size(26.dp)
                 )
             }
         }
@@ -713,54 +726,334 @@ fun AdminPanelScreen(
                             }
                         }
 
+                        // Live Per-Arena WinGo Result Controller (30s, 1m, 3m, 5m • 0-9 Numbers, Big/Small, Colors)
+                        var selectedControlMode by remember { mutableStateOf(GameMode.MODE_30S) }
+                        val currentForcedDigit = appConfig.forcedDigitForMode(selectedControlMode)
+
+                        fun applyDigitForMode(mode: GameMode, digit: Int?, label: String) {
+                            val updated = when (mode) {
+                                GameMode.MODE_30S -> appConfig.copy(forced30sDigit = digit, forcedNextColor = null)
+                                GameMode.MODE_60S -> appConfig.copy(forced60sDigit = digit, forcedNextColor = null)
+                                GameMode.MODE_3M -> appConfig.copy(forced3mDigit = digit, forcedNextColor = null)
+                                GameMode.MODE_5M -> appConfig.copy(forced5mDigit = digit, forcedNextColor = null)
+                            }
+                            onSaveConfig(updated, "${mode.title}: $label")
+                        }
+
                         Surface(
-                            shape = RoundedCornerShape(18.dp),
+                            shape = RoundedCornerShape(20.dp),
                             color = ObsidianCard,
-                            border = BorderStroke(1.dp, AmberGoldTop.copy(alpha = 0.5f)),
+                            border = BorderStroke(1.5.dp, AmberGoldTop.copy(alpha = 0.7f)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Text(
+                                    text = "Live WinGo Result Controller (0–9 / Big-Small)",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = AmberGoldTop
+                                )
+                                Text(
+                                    text = "Step 1: Select 30s / 1m / 3m / 5m arena. Step 2: Tap any Number (0–9), Big/Small, or Color — next round lands on that exact result for ALL players!",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = TextSecondary
+                                )
+
+                                // Step 1: 4 Arena Mode Pills with live active badge
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    GameMode.entries.forEach { mode ->
+                                        val isModeSelected = selectedControlMode == mode
+                                        val modeDigit = appConfig.forcedDigitForMode(mode)
+                                        Surface(
+                                            onClick = { selectedControlMode = mode },
+                                            shape = RoundedCornerShape(12.dp),
+                                            color = if (isModeSelected) AmberOrangeMid else ObsidianCanvas,
+                                            border = BorderStroke(
+                                                1.dp,
+                                                when {
+                                                    isModeSelected -> AmberGoldTop
+                                                    modeDigit != null -> NeonEmerald
+                                                    else -> ObsidianBorder
+                                                }
+                                            ),
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .testTag("admin_mode_ctrl_${mode.id}")
+                                        ) {
+                                            Column(
+                                                modifier = Modifier.padding(vertical = 8.dp, horizontal = 4.dp),
+                                                horizontalAlignment = Alignment.CenterHorizontally
+                                            ) {
+                                                Text(
+                                                    text = mode.shortLabel,
+                                                    style = MaterialTheme.typography.labelLarge,
+                                                    fontWeight = FontWeight.ExtraBold,
+                                                    color = if (isModeSelected) Color.White else TextPrimary
+                                                )
+                                                Text(
+                                                    text = modeDigit?.let { "#$it" } ?: "Auto",
+                                                    fontFamily = JetBrainsMonoFontFamily,
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = when {
+                                                        isModeSelected -> Color.White.copy(alpha = 0.92f)
+                                                        modeDigit != null -> NeonEmeraldBright
+                                                        else -> TextSecondary
+                                                    }
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Live status indicator for selected arena
+                                Surface(
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = ObsidianCanvas,
+                                    border = BorderStroke(
+                                        1.dp,
+                                        if (currentForcedDigit != null) NeonEmerald.copy(alpha = 0.7f) else ObsidianBorder
+                                    ),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    val statusText = if (currentForcedDigit != null) {
+                                        val col = ColorPredictionEngine.digitToColor(currentForcedDigit).displayName
+                                        val bs = digitBigSmallLabel(currentForcedDigit)
+                                        "Next ${selectedControlMode.title} Result: #$currentForcedDigit ($col • $bs)"
+                                    } else {
+                                        "Next ${selectedControlMode.title} Result: Auto Fair (SHA-256)"
+                                    }
+                                    Text(
+                                        text = statusText,
+                                        fontFamily = JetBrainsMonoFontFamily,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (currentForcedDigit != null) NeonEmeraldBright else CoinGoldSoft,
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
+                                    )
+                                }
+
+                                // Step 2: Tap Exact Number 0-9 (2 rows of 5 glossy balls)
+                                Text(
+                                    text = "Tap Exact Winning Number (0–9)",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = TextSecondary
+                                )
+                                listOf(0..4, 5..9).forEach { range ->
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        range.forEach { digit ->
+                                            val picked = currentForcedDigit == digit
+                                            WinGoNumberBall(
+                                                digit = digit,
+                                                size = 50.dp,
+                                                isSelected = picked,
+                                                onClick = {
+                                                    val col = ColorPredictionEngine.digitToColor(digit).displayName
+                                                    val bs = digitBigSmallLabel(digit)
+                                                    applyDigitForMode(selectedControlMode, digit, "Forced #$digit ($col • $bs)")
+                                                },
+                                                modifier = Modifier.testTag("admin_force_digit_$digit")
+                                            )
+                                        }
+                                    }
+                                }
+
+                                // Step 3: Quick Big / Small / Color / Auto Presets
+                                Text(
+                                    text = "Quick Win Presets (${selectedControlMode.shortLabel})",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = TextSecondary
+                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    AdminQuickPresetButton(
+                                        label = "Auto Fair",
+                                        active = currentForcedDigit == null,
+                                        accent = CyanPulse,
+                                        onClick = { applyDigitForMode(selectedControlMode, null, "Auto Fair SHA-256") },
+                                        modifier = Modifier.weight(1f).testTag("admin_preset_auto")
+                                    )
+                                    AdminQuickPresetButton(
+                                        label = "Big (#7)",
+                                        active = currentForcedDigit != null && currentForcedDigit >= 5,
+                                        accent = AmberOrangeMid,
+                                        onClick = { applyDigitForMode(selectedControlMode, 7, "Forced Big #7 (Green)") },
+                                        modifier = Modifier.weight(1f).testTag("admin_preset_big")
+                                    )
+                                    AdminQuickPresetButton(
+                                        label = "Small (#2)",
+                                        active = currentForcedDigit != null && currentForcedDigit <= 4,
+                                        accent = Color(0xFF3B82F6),
+                                        onClick = { applyDigitForMode(selectedControlMode, 2, "Forced Small #2 (Red)") },
+                                        modifier = Modifier.weight(1f).testTag("admin_preset_small")
+                                    )
+                                }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    AdminQuickPresetButton(
+                                        label = "Green (#3)",
+                                        active = currentForcedDigit in listOf(1, 3, 7, 9),
+                                        accent = NeonEmerald,
+                                        onClick = { applyDigitForMode(selectedControlMode, 3, "Forced Green #3") },
+                                        modifier = Modifier.weight(1f).testTag("admin_preset_green")
+                                    )
+                                    AdminQuickPresetButton(
+                                        label = "Violet (#5)",
+                                        active = currentForcedDigit in listOf(0, 5),
+                                        accent = ElectricViolet,
+                                        onClick = { applyDigitForMode(selectedControlMode, 5, "Forced Violet #5 (Big)") },
+                                        modifier = Modifier.weight(1f).testTag("admin_preset_violet")
+                                    )
+                                    AdminQuickPresetButton(
+                                        label = "Red (#4)",
+                                        active = currentForcedDigit in listOf(2, 4, 6, 8),
+                                        accent = RubyRed,
+                                        onClick = { applyDigitForMode(selectedControlMode, 4, "Forced Red #4 (Small)") },
+                                        modifier = Modifier.weight(1f).testTag("admin_preset_red")
+                                    )
+                                }
+
+                                // Bulk Controls: Apply current number to ALL 4 Arenas or Reset All
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Button(
+                                        onClick = {
+                                            val d = currentForcedDigit ?: 5
+                                            onSaveConfig(
+                                                appConfig.copy(
+                                                    forcedNextColor = null,
+                                                    forced30sDigit = d,
+                                                    forced60sDigit = d,
+                                                    forced3mDigit = d,
+                                                    forced5mDigit = d
+                                                ),
+                                                "Applied #$d to ALL 4 WinGo Arenas"
+                                            )
+                                        },
+                                        shape = RoundedCornerShape(12.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = AmberOrangeMid, contentColor = Color.White),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Text(
+                                            text = "Apply #${currentForcedDigit ?: 5} to All 4",
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 12.sp
+                                        )
+                                    }
+                                    OutlinedButton(
+                                        onClick = {
+                                            onSaveConfig(
+                                                appConfig.copy(
+                                                    forcedNextColor = null,
+                                                    forced30sDigit = null,
+                                                    forced60sDigit = null,
+                                                    forced3mDigit = null,
+                                                    forced5mDigit = null
+                                                ),
+                                                "Reset ALL 4 WinGo Arenas to Auto Fair"
+                                            )
+                                        },
+                                        shape = RoundedCornerShape(12.dp),
+                                        border = BorderStroke(1.dp, ObsidianBorder),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Text(
+                                            text = "Reset All Auto",
+                                            color = TextSecondary,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 12.sp
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        // Step 4: 3D Spin & Win Exact Result Controller (0..7 matching WHEEL_SLICES)
+                        val spinOptions = remember {
+                            listOf(
+                                null to "Auto Fair",
+                                2 to "0 VC",
+                                0 to "50 VC",
+                                4 to "100 VC",
+                                5 to "150 VC",
+                                7 to "200 VC",
+                                1 to "250 VC",
+                                3 to "500 VC",
+                                6 to "1000 VC"
+                            )
+                        }
+                        val activeSpinLabel = spinOptions.firstOrNull { it.first == appConfig.forcedSpinSliceIndex }?.second ?: "Auto Fair"
+
+                        Surface(
+                            shape = RoundedCornerShape(20.dp),
+                            color = ObsidianCard,
+                            border = BorderStroke(1.5.dp, ElectricViolet.copy(alpha = 0.7f)),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Column(
                                 modifier = Modifier.padding(16.dp),
                                 verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
-                                Text("Engine Result Mode (Demo)", style = MaterialTheme.typography.titleMedium, color = TextPrimary)
                                 Text(
-                                    text = "Active Mode: ${appConfig.forcedNextColor?.let { "Override -> $it" } ?: "Auto Fair (SHA-256)"}",
-                                    fontFamily = JetBrainsMonoFontFamily,
-                                    fontSize = 12.sp,
-                                    color = CoinGoldSoft
+                                    text = "3D Spin & Win Result Controller",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = ElectricVioletBright
                                 )
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    listOf(
-                                        null to "Auto",
-                                        "GREEN" to "Green",
-                                        "VIOLET" to "Violet",
-                                        "RED" to "Red"
-                                    ).forEach { (overrideVal, label) ->
-                                        val active = appConfig.forcedNextColor == overrideVal
-                                        Surface(
-                                            onClick = {
-                                                onSaveConfig(
-                                                    appConfig.copy(forcedNextColor = overrideVal),
-                                                    "Engine mode set to ${overrideVal ?: "Auto Fair SHA-256"}"
+                                Text(
+                                    text = "Active Spin Outcome: $activeSpinLabel (tap any prize below — wheel lands directly on that exact slice!)",
+                                    fontFamily = JetBrainsMonoFontFamily,
+                                    fontSize = 11.sp,
+                                    color = if (appConfig.forcedSpinSliceIndex != null) NeonEmeraldBright else CoinGoldSoft
+                                )
+
+                                spinOptions.chunked(3).forEach { rowItems ->
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        rowItems.forEach { (sliceIdx, label) ->
+                                            val active = appConfig.forcedSpinSliceIndex == sliceIdx
+                                            Surface(
+                                                onClick = {
+                                                    onSaveConfig(
+                                                        appConfig.copy(forcedSpinSliceIndex = sliceIdx),
+                                                        "3D Spin Wheel forced result: $label"
+                                                    )
+                                                },
+                                                shape = RoundedCornerShape(12.dp),
+                                                color = if (active) ElectricViolet else ObsidianCanvas,
+                                                border = BorderStroke(1.dp, if (active) ElectricVioletBright else ObsidianBorder),
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .testTag("admin_spin_slice_${sliceIdx ?: "auto"}")
+                                            ) {
+                                                Text(
+                                                    text = label,
+                                                    fontFamily = JetBrainsMonoFontFamily,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.ExtraBold,
+                                                    color = if (active) Color.White else TextSecondary,
+                                                    textAlign = TextAlign.Center,
+                                                    modifier = Modifier.padding(vertical = 10.dp)
                                                 )
-                                            },
-                                            shape = RoundedCornerShape(10.dp),
-                                            color = if (active) AmberOrangeMid else ObsidianCanvas,
-                                            border = BorderStroke(1.dp, if (active) AmberGoldTop else ObsidianBorder),
-                                            modifier = Modifier.weight(1f)
-                                        ) {
-                                            Text(
-                                                text = label,
-                                                style = MaterialTheme.typography.labelMedium,
-                                                fontWeight = FontWeight.Bold,
-                                                color = if (active) Color.White else TextSecondary,
-                                                modifier = Modifier.padding(vertical = 10.dp),
-                                                textAlign = TextAlign.Center
-                                            )
+                                            }
                                         }
                                     }
                                 }
@@ -1497,6 +1790,32 @@ private fun AdminToggleRow(
             checked = checked,
             onCheckedChange = onCheckedChange,
             colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = NeonEmerald)
+        )
+    }
+}
+
+@Composable
+private fun AdminQuickPresetButton(
+    label: String,
+    active: Boolean,
+    accent: Color,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(10.dp),
+        color = if (active) accent else ObsidianCanvas,
+        border = BorderStroke(1.dp, if (active) accent else ObsidianBorder),
+        modifier = modifier
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.ExtraBold,
+            color = if (active) Color.White else TextSecondary,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 10.dp)
         )
     }
 }

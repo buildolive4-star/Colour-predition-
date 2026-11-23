@@ -19,6 +19,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.AccountBalanceWallet
+import androidx.compose.material.icons.filled.CardGiftcard
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.QrCode2
@@ -81,7 +82,9 @@ import com.example.ui.theme.TextSecondary
 fun ProfileScreen(
     profile: UserProfile?,
     predictions: List<PredictionRecord>,
+    pendingReferralsCount: Int = 0,
     onOpenWallet: () -> Unit,
+    onOpenPromotion: () -> Unit,
     onOpenQrCenter: () -> Unit,
     onOpenAdminPanel: () -> Unit,
     onOpenLeaderboard: () -> Unit,
@@ -355,6 +358,31 @@ fun ProfileScreen(
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold,
                         color = CoinGoldSoft
+                    )
+                }
+
+                Button(
+                    onClick = onOpenPromotion,
+                    shape = RoundedCornerShape(16.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = ElectricViolet,
+                        contentColor = Color.White
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp)
+                        .testTag("profile_open_promotion_button")
+                ) {
+                    Icon(Icons.Filled.CardGiftcard, contentDescription = null, tint = AmberGoldTop)
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        text = if (pendingReferralsCount > 0) {
+                            "Promotion & Referrals • Collect +${pendingReferralsCount * 500} VC"
+                        } else {
+                            "Promotion Link & Refer Friends (+500 VC)"
+                        },
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.ExtraBold
                     )
                 }
 

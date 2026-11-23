@@ -79,6 +79,7 @@ import com.example.ui.screens.LeaderboardScreen
 import com.example.ui.screens.MiniGamesScreen
 import com.example.ui.screens.NotificationsSheet
 import com.example.ui.screens.ProfileScreen
+import com.example.ui.screens.PromotionScreen
 import com.example.ui.screens.VirtualWalletSheet
 import com.example.ui.screens.WithdrawModalSheet
 import com.example.ui.theme.AmberGoldTop
@@ -91,6 +92,7 @@ import com.example.ui.viewmodel.ChromaPulseViewModel
 import com.google.firebase.Firebase
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.auth
+import kotlinx.coroutines.launch
 
 const val ROUTE_HOME = "home"
 const val ROUTE_ARENA = "arena"
@@ -99,6 +101,7 @@ const val ROUTE_HISTORY = "history"
 const val ROUTE_LEADERBOARD = "leaderboard"
 const val ROUTE_PROFILE = "profile"
 const val ROUTE_QR_CENTER = "qr_center"
+const val ROUTE_PROMOTION = "promotion"
 const val ROUTE_ADMIN = "admin"
 
 private data class NavDestination(
@@ -192,6 +195,7 @@ private fun AuthenticatedChromaPulseApp(currentUserId: String) {
     val coAdminGrants by viewModel.allCoAdminGrantsState.collectAsStateWithLifecycle()
     val userWalletRequests by viewModel.userWalletRequestsState.collectAsStateWithLifecycle()
     val adminWalletRequests by viewModel.adminWalletRequestsState.collectAsStateWithLifecycle()
+    val myReferrals by viewModel.myReferralsState.collectAsStateWithLifecycle()
     val lastCreatedPassword by viewModel.lastCreatedCoAdminPassword.collectAsStateWithLifecycle()
     val isVerifyingAdminPass by viewModel.isVerifyingAdminPass.collectAsStateWithLifecycle()
 
@@ -209,6 +213,7 @@ private fun AuthenticatedChromaPulseApp(currentUserId: String) {
     val savedRounds = (roundsState as? UiState.Success)?.data.orEmpty()
     val leaderboardEntries = (leaderboardState as? UiState.Success)?.data.orEmpty()
     val unreadCount = remember(notifications) { notifications.count { !it.read } }
+    val pendingReferralsCount = remember(myReferrals) { myReferrals.count { !it.referrerRewardClaimed } }
 
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
@@ -238,7 +243,10 @@ private fun AuthenticatedChromaPulseApp(currentUserId: String) {
     }
 
     val isFullScreenSubRoute =
-        currentRoute == ROUTE_ADMIN || currentRoute == ROUTE_QR_CENTER || currentRoute == ROUTE_LEADERBOARD
+        currentRoute == ROUTE_ADMIN ||
+            currentRoute == ROUTE_QR_CENTER ||
+            currentRoute == ROUTE_LEADERBOARD ||
+            currentRoute == ROUTE_PROMOTION
 
     BoxWithConstraints(
         modifier = Modifier
@@ -339,6 +347,7 @@ private fun AuthenticatedChromaPulseApp(currentUserId: String) {
                                 recentOutcomesByMode = recentOutcomes,
                                 predictions = predictions,
                                 unreadNotificationsCount = unreadCount,
+                                pendingReferralsCount = pendingReferralsCount,
                                 isClaimingBonus = isClaimingBonus,
                                 onOpenGameMode = { mode ->
                                     viewModel.selectMode(mode)
@@ -348,6 +357,7 @@ private fun AuthenticatedChromaPulseApp(currentUserId: String) {
                                     selectedMiniGameTab = tabIdx
                                     navigateTopLevel(ROUTE_MINIGAMES)
                                 },
+                                onOpenPromotion = { navController.navigate(ROUTE_PROMOTION) },
                                 onOpenQrCenter = { navController.navigate(ROUTE_QR_CENTER) },
                                 onOpenAdminPanel = { navController.navigate(ROUTE_ADMIN) },
                                 onOpenWallet = { showWalletSheet = true },
@@ -385,6 +395,7 @@ private fun AuthenticatedChromaPulseApp(currentUserId: String) {
                             MiniGamesScreen(
                                 initialGameTab = selectedMiniGameTab,
                                 profile = profile,
+                                forcedSpinSliceIndex = appConfig.forcedSpinSliceIndex,
                                 onPlayMiniGameRound = { gameTitle, stake, reward, summary ->
                                     viewModel.playMiniGameRound(gameTitle, stake, reward, summary)
                                 },
@@ -414,7 +425,9 @@ private fun AuthenticatedChromaPulseApp(currentUserId: String) {
                             ProfileScreen(
                                 profile = profile,
                                 predictions = predictions,
+                                pendingReferralsCount = pendingReferralsCount,
                                 onOpenWallet = { showWalletSheet = true },
+                                onOpenPromotion = { navController.navigate(ROUTE_PROMOTION) },
                                 onOpenQrCenter = { navController.navigate(ROUTE_QR_CENTER) },
                                 onOpenAdminPanel = { navController.navigate(ROUTE_ADMIN) },
                                 onOpenLeaderboard = { navController.navigate(ROUTE_LEADERBOARD) },
@@ -424,6 +437,26 @@ private fun AuthenticatedChromaPulseApp(currentUserId: String) {
                                 onSignOut = {
                                     GoogleAuthHelper.signOut(credentialManager, scope)
                                 }
+                            )
+                        }
+
+                        composable(ROUTE_PROMOTION) {
+                            PromotionScreen(
+                                profile = profile,
+                                myReferrals = myReferrals,
+                                onApplyReferralCode = { rawInput, onOk ->
+                                    viewModel.applyReferralCode(rawInput, onOk)
+                                },
+                                onCollectReferralBonus = { referredUid, onCollected ->
+                                    viewModel.collectReferralBonus(referredUid, onCollected)
+                                },
+                                onCollectAllReferralBonuses = { onCollected ->
+                                    viewModel.collectAllReferralBonuses(onCollected)
+                                },
+                                onShowMessage = { msg ->
+                                    scope.launch { snackbarHostState.showSnackbar(msg) }
+                                },
+                                onBack = { navController.popBackStack() }
                             )
                         }
 

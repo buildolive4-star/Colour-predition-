@@ -1,6 +1,7 @@
 package com.example.data
 
 import androidx.annotation.Keep
+import com.example.domain.GameMode
 import com.google.firebase.Timestamp
 import com.google.firebase.firestore.DocumentId
 import com.google.firebase.firestore.Exclude
@@ -23,6 +24,9 @@ data class UserProfile(
     val currentStreak: Long = 0L,
     val bestStreak: Long = 0L,
     val lastDailyBonusDate: String? = null,
+    val referredByCode: String? = null,
+    val referralCount: Long = 0L,
+    val referralEarnedCoins: Long = 0L,
     val notifyResults: Boolean = true,
     val notifyRoundClosing: Boolean = true,
     val notifyBonuses: Boolean = true,
@@ -165,6 +169,11 @@ data class AppConfigEntity(
     val mode3mEnabled: Boolean = true,
     val mode5mEnabled: Boolean = true,
     val forcedNextColor: String? = null,
+    val forced30sDigit: Int? = null,
+    val forced60sDigit: Int? = null,
+    val forced3mDigit: Int? = null,
+    val forced5mDigit: Int? = null,
+    val forcedSpinSliceIndex: Int? = null,
     val adminQrLabel: String = "ChromaPulse Virtual Counter",
     val adminQrPayload: String = "CHROMAPULSE:VIRTUAL-DEMO:COUNTER-01",
     val updatedByEmail: String? = null,
@@ -172,6 +181,14 @@ data class AppConfigEntity(
 ) {
     @get:Exclude
     val updatedAtMs: Long get() = updatedAt?.toDate()?.time ?: 0L
+
+    @Exclude
+    fun forcedDigitForMode(mode: GameMode): Int? = when (mode) {
+        GameMode.MODE_30S -> forced30sDigit
+        GameMode.MODE_60S -> forced60sDigit
+        GameMode.MODE_3M -> forced3mDigit
+        GameMode.MODE_5M -> forced5mDigit
+    }?.takeIf { it in 0..9 }
 }
 
 @Keep
@@ -257,6 +274,27 @@ data class WalletRequestEntity(
     val status: String = "PENDING", // PENDING, APPROVED, VERIFIED, REJECTED
     val adminNote: String? = null,
     val processedByEmail: String? = null,
+    @ServerTimestamp val createdAt: Timestamp? = null,
+    @ServerTimestamp val updatedAt: Timestamp? = null
+) {
+    @get:Exclude
+    val createdAtMs: Long get() = createdAt?.toDate()?.time ?: 0L
+
+    @get:Exclude
+    val updatedAtMs: Long get() = updatedAt?.toDate()?.time ?: 0L
+}
+
+@Keep
+@IgnoreExtraProperties
+data class ReferralClaimEntity(
+    @DocumentId val id: String = "",
+    val referredUid: String = "",
+    val referredName: String = "Chroma Player",
+    val referrerUid: String = "",
+    val referrerCode: String = "",
+    val referrerName: String = "Chroma Player",
+    val bonusCoins: Long = 500L,
+    val referrerRewardClaimed: Boolean = false,
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
 ) {

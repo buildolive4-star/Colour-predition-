@@ -87,11 +87,59 @@ class ChromaPulseRepository(
         val path = "users/$uid/predictions"
         emitAll(
             db.collection("users").document(uid).collection("predictions")
-                .orderBy("createdAt", Query.Direction.DESCENDING)
+                .limit(150)
+                .snapshots()
+                .map { snap ->
+                    snap.documents.mapNotNull { doc -> parsePredictionDoc(doc) }
+                        .sortedByDescending { pred ->
+                            pred.createdAt?.toDate()?.time ?: Long.MAX_VALUE
+                        }
+                }
+                .wrapFirestoreListener(uid, path, OperationType.LIST)
+        )
+    }
+
+    private fun parsePredictionDoc(doc: DocumentSnapshot): PredictionRecord? {
+        if (!doc.exists()) return null
+        return try {
+            PredictionRecord(
+                id = doc.id,
+                userId = doc.getString("userId").orEmpty(),
+                modeId = doc.getString("modeId").orEmpty().ifBlank { "mode_30s" },
+                periodId = doc.getString("periodId").orEmpty(),
+                betType = doc.getString("betType").orEmpty().ifBlank { "COLOR" },
+                betLabel = doc.getString("betLabel").orEmpty(),
+                selectedColor = doc.getString("selectedColor").orEmpty().ifBlank { "GREEN" },
+                selectedDigit = doc.getLong("selectedDigit")?.toInt(),
+                selectedSize = doc.getString("selectedSize"),
+                stakeCoins = doc.getLong("stakeCoins") ?: 0L,
+                status = doc.getString("status").orEmpty().ifBlank { "PENDING" },
+                winningColor = doc.getString("winningColor"),
+                winningDigit = doc.getLong("winningDigit")?.toInt(),
+                rewardCoins = doc.getLong("rewardCoins") ?: 0L,
+                resultHash = doc.getString("resultHash"),
+                createdAt = doc.getTimestamp("createdAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE),
+                updatedAt = doc.getTimestamp("updatedAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+            )
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    fun observeMyReferrals(userId: String): Flow<List<ReferralClaimEntity>> = flow {
+        val uid = requireUserId()
+        val path = "referrals"
+        emitAll(
+            db.collection("referrals")
+                .whereEqualTo("referrerUid", uid)
                 .limit(100)
                 .snapshots()
                 .map { snap ->
-                    snap.toObjects(PredictionRecord::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                    snap.toObjects(ReferralClaimEntity::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                        .sortedWith(
+                            compareBy<ReferralClaimEntity> { it.referrerRewardClaimed }
+                                .thenByDescending { it.createdAtMs }
+                        )
                 }
                 .wrapFirestoreListener(uid, path, OperationType.LIST)
         )
@@ -388,6 +436,9 @@ class ChromaPulseRepository(
                 batch.commit().await()
             }
 
+            // Always ensure public referral code directory entry is published for this user
+            ensureReferralCodePublished(uid, publicId, displayName)
+
             // If Main Admin logs in for the first time, bootstrap global config & starter QR vouchers
             if (isSuperAdminEmail(user.email)) {
                 bootstrapGlobalConfigAndVouchersIfNeeded(email)
@@ -399,6 +450,29 @@ class ChromaPulseRepository(
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.WRITE, path)
             Result.failure(e)
+        }
+    }
+
+    private suspend fun ensureReferralCodePublished(uid: String, publicId: String, displayName: String) {
+        val code = publicId.trim().uppercase(Locale.US)
+        if (!code.matches(Regex("^[A-Z0-9\\-]{3,32}$"))) return
+        try {
+            val codeRef = db.collection("referral_codes").document(code)
+            if (!codeRef.get().await().exists()) {
+                codeRef.set(
+                    mapOf(
+                        "code" to code,
+                        "referrerUid" to uid,
+                        "referrerName" to displayName.take(60).ifBlank { "Chroma Player" },
+                        "createdAt" to FieldValue.serverTimestamp(),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.CREATE, "referral_codes/$code")
         }
     }
 
@@ -555,27 +629,78 @@ class ChromaPulseRepository(
         }
     }
 
-    suspend fun recordCompletedRoundIfAbsent(outcome: VerifiableRoundOutcome): Result<Unit> {
+    fun resolveEffectiveOutcome(
+        outcome: VerifiableRoundOutcome,
+        config: AppConfigEntity
+    ): VerifiableRoundOutcome {
+        val forcedDigit = config.forcedDigitForMode(outcome.mode)
+        if (forcedDigit != null) {
+            return outcome.copy(
+                winningColor = ColorPredictionEngine.digitToColor(forcedDigit),
+                resultDigit = forcedDigit
+            )
+        }
+        if (!config.forcedNextColor.isNullOrBlank()) {
+            val forcedColor = PredictionColor.fromRaw(config.forcedNextColor)
+            val fallbackDigit = when (forcedColor) {
+                PredictionColor.VIOLET -> 5
+                PredictionColor.GREEN -> 7
+                PredictionColor.RED -> 4
+            }
+            return outcome.copy(
+                winningColor = forcedColor,
+                resultDigit = fallbackDigit
+            )
+        }
+        return outcome
+    }
+
+    suspend fun recordCompletedRoundIfAbsent(
+        outcome: VerifiableRoundOutcome,
+        applyAdminConfig: Boolean = true
+    ): Result<VerifiableRoundOutcome> {
         val path = "game_rounds/${outcome.roundDocId}"
         return try {
             requireUserId()
             val roundRef = db.collection("game_rounds").document(outcome.roundDocId)
-            if (!roundRef.get().await().exists()) {
-                roundRef.set(
-                    mapOf(
-                        "modeId" to outcome.mode.id,
-                        "periodId" to outcome.periodId,
-                        "startTimeMs" to outcome.startTimeMs,
-                        "endTimeMs" to outcome.endTimeMs,
-                        "winningColor" to outcome.winningColor.name,
-                        "resultDigit" to outcome.resultDigit.toLong(),
-                        "resultHash" to outcome.resultHash,
-                        "status" to "COMPLETED",
-                        "createdAt" to FieldValue.serverTimestamp()
+            val existingSnap = roundRef.get().await()
+            if (existingSnap.exists()) {
+                val existingDigit = existingSnap.getLong("resultDigit")?.toInt()?.coerceIn(0, 9) ?: outcome.resultDigit
+                val existingColor = existingSnap.getString("winningColor")?.let { PredictionColor.fromRaw(it) }
+                    ?: ColorPredictionEngine.digitToColor(existingDigit)
+                val existingHash = existingSnap.getString("resultHash").orEmpty().ifBlank { outcome.resultHash }
+                return Result.success(
+                    outcome.copy(
+                        winningColor = existingColor,
+                        resultDigit = existingDigit,
+                        resultHash = existingHash
                     )
-                ).await()
+                )
             }
-            Result.success(Unit)
+
+            val effectiveOutcome = if (applyAdminConfig) {
+                val configSnap = db.collection("app_config").document("global").get().await()
+                val config = configSnap.toObject(AppConfigEntity::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                    ?: AppConfigEntity()
+                resolveEffectiveOutcome(outcome, config)
+            } else {
+                outcome
+            }
+
+            roundRef.set(
+                mapOf(
+                    "modeId" to effectiveOutcome.mode.id,
+                    "periodId" to effectiveOutcome.periodId,
+                    "startTimeMs" to effectiveOutcome.startTimeMs,
+                    "endTimeMs" to effectiveOutcome.endTimeMs,
+                    "winningColor" to effectiveOutcome.winningColor.name,
+                    "resultDigit" to effectiveOutcome.resultDigit.toLong(),
+                    "resultHash" to effectiveOutcome.resultHash,
+                    "status" to "COMPLETED",
+                    "createdAt" to FieldValue.serverTimestamp()
+                )
+            ).await()
+            Result.success(effectiveOutcome)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -600,16 +725,33 @@ class ChromaPulseRepository(
             val config = configSnap.toObject(AppConfigEntity::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
                 ?: AppConfigEntity()
 
-            val effectiveOutcome = if (!config.forcedNextColor.isNullOrBlank()) {
-                val forcedColor = PredictionColor.fromRaw(config.forcedNextColor)
-                val forcedDigit = when (forcedColor) {
-                    PredictionColor.VIOLET -> 5
-                    PredictionColor.GREEN -> 7
-                    PredictionColor.RED -> 4
-                }
-                outcome.copy(winningColor = forcedColor, resultDigit = forcedDigit)
+            // First honor the shared cloud game_rounds record (which captures Admin's exact forced number)
+            val roundSnap = db.collection("game_rounds").document(outcome.roundDocId).get().await()
+            val effectiveOutcome = if (roundSnap.exists()) {
+                val cloudDigit = roundSnap.getLong("resultDigit")?.toInt()?.coerceIn(0, 9) ?: outcome.resultDigit
+                val cloudColor = roundSnap.getString("winningColor")?.let { PredictionColor.fromRaw(it) }
+                    ?: ColorPredictionEngine.digitToColor(cloudDigit)
+                val cloudHash = roundSnap.getString("resultHash").orEmpty().ifBlank { outcome.resultHash }
+                outcome.copy(winningColor = cloudColor, resultDigit = cloudDigit, resultHash = cloudHash)
             } else {
-                outcome
+                val resolved = resolveEffectiveOutcome(outcome, config)
+                // Persist authoritative round so Game history & all players see the exact same digit
+                runCatching {
+                    db.collection("game_rounds").document(resolved.roundDocId).set(
+                        mapOf(
+                            "modeId" to resolved.mode.id,
+                            "periodId" to resolved.periodId,
+                            "startTimeMs" to resolved.startTimeMs,
+                            "endTimeMs" to resolved.endTimeMs,
+                            "winningColor" to resolved.winningColor.name,
+                            "resultDigit" to resolved.resultDigit.toLong(),
+                            "resultHash" to resolved.resultHash,
+                            "status" to "COMPLETED",
+                            "createdAt" to FieldValue.serverTimestamp()
+                        )
+                    ).await()
+                }
+                resolved
             }
 
             val userRef = db.collection("users").document(uid)
@@ -620,8 +762,7 @@ class ChromaPulseRepository(
 
             val reward = db.runTransaction { tx ->
                 val predSnap = tx.get(predRef)
-                val currentPred = predSnap.toObject(PredictionRecord::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
-                    ?: return@runTransaction 0L
+                val currentPred = parsePredictionDoc(predSnap) ?: return@runTransaction 0L
                 if (currentPred.status != "PENDING") return@runTransaction 0L
 
                 val userSnap = tx.get(userRef)
@@ -1120,6 +1261,11 @@ class ChromaPulseRepository(
                 put("mode3mEnabled", config.mode3mEnabled)
                 put("mode5mEnabled", config.mode5mEnabled)
                 put("forcedNextColor", config.forcedNextColor)
+                put("forced30sDigit", config.forced30sDigit?.takeIf { it in 0..9 })
+                put("forced60sDigit", config.forced60sDigit?.takeIf { it in 0..9 })
+                put("forced3mDigit", config.forced3mDigit?.takeIf { it in 0..9 })
+                put("forced5mDigit", config.forced5mDigit?.takeIf { it in 0..9 })
+                put("forcedSpinSliceIndex", config.forcedSpinSliceIndex?.takeIf { it in 0..7 })
                 put("adminQrLabel", config.adminQrLabel.trim().take(80).ifBlank { "ChromaPulse Counter" })
                 put("adminQrPayload", config.adminQrPayload.trim().take(200).ifBlank { "CHROMAPULSE:DEMO" })
                 put("updatedByEmail", currentUserEmail())
@@ -1128,7 +1274,7 @@ class ChromaPulseRepository(
             if (cfgRef.get().await().exists()) {
                 cfgRef.update(payload).await()
             } else {
-                cfgRef.set(payload.filterValues { it != null }).await()
+                cfgRef.set(payload).await()
             }
             writeAdminAuditLog("CONFIG_UPDATE", auditSummary, actorRole)
             Result.success(Unit)
@@ -1865,8 +2011,193 @@ class ChromaPulseRepository(
         }
     }
 
+    // ---- Promotion & Referral Program (+500 VC Collect) ----
+
+    suspend fun applyReferralCode(rawInput: String): Result<String> {
+        var path = "referral_codes"
+        return try {
+            val uid = requireUserId()
+            // Accept either raw code ("CP-C03732") or full invite URL ("https://chromapulse.app/invite?ref=CP-C03732")
+            val extracted = rawInput.trim().let { input ->
+                val refParam = Regex("[?&]ref=([A-Za-z0-9\\-]+)", RegexOption.IGNORE_CASE)
+                    .find(input)?.groupValues?.getOrNull(1)
+                (refParam ?: input).trim().uppercase(Locale.US)
+            }
+            require(extracted.matches(Regex("^[A-Z0-9\\-]{3,32}$"))) {
+                "Enter a valid Referral Code (e.g. CP-C03732) or paste a Promotion Invite Link."
+            }
+
+            path = "referral_codes/$extracted"
+            val codeSnap = db.collection("referral_codes").document(extracted).get().await()
+            if (!codeSnap.exists()) {
+                throw IllegalStateException("Referral code '$extracted' not found. Ask your friend to open the app once.")
+            }
+            val referrerUid = codeSnap.getString("referrerUid").orEmpty()
+            val referrerName = codeSnap.getString("referrerName").orEmpty().ifBlank { "Chroma Friend" }.take(60)
+            if (referrerUid.isBlank() || referrerUid == uid) {
+                throw IllegalStateException("You cannot use your own referral code.")
+            }
+
+            val bonusCoins = REFERRAL_BONUS_COINS
+            val userRef = db.collection("users").document(uid)
+            val referralRef = db.collection("referrals").document(uid)
+            val txRef = userRef.collection("wallet_transactions").document("ref_join_$extracted")
+            val notifRef = userRef.collection("notifications").document("notif_ref_join")
+            path = "referrals/$uid"
+
+            db.runTransaction { tx ->
+                val userSnap = tx.get(userRef)
+                val user = userSnap.toObject(UserProfile::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                    ?: throw IllegalStateException("Player wallet not initialized yet.")
+                if (!user.referredByCode.isNullOrBlank() || tx.get(referralRef).exists()) {
+                    throw IllegalStateException("You have already claimed a referral welcome bonus.")
+                }
+
+                val newBalance = (user.virtualCoins + bonusCoins).coerceAtMost(100_000_000L)
+
+                tx.set(
+                    referralRef,
+                    mapOf(
+                        "referredUid" to uid,
+                        "referredName" to user.displayName.take(60).ifBlank { "Chroma Player" },
+                        "referrerUid" to referrerUid,
+                        "referrerCode" to extracted,
+                        "referrerName" to referrerName,
+                        "bonusCoins" to bonusCoins,
+                        "referrerRewardClaimed" to false,
+                        "createdAt" to FieldValue.serverTimestamp(),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                )
+                tx.update(
+                    userRef,
+                    mapOf(
+                        "virtualCoins" to newBalance,
+                        "referredByCode" to extracted,
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                )
+                tx.set(
+                    txRef,
+                    mapOf(
+                        "userId" to uid,
+                        "txType" to "REFERRAL_BONUS",
+                        "amount" to bonusCoins,
+                        "previousBalance" to user.virtualCoins,
+                        "newBalance" to newBalance,
+                        "referenceId" to extracted,
+                        "description" to "Referral Welcome Bonus (+$bonusCoins VC via $extracted)".take(220),
+                        "createdAt" to FieldValue.serverTimestamp()
+                    )
+                )
+                tx.set(
+                    notifRef,
+                    mapOf(
+                        "userId" to uid,
+                        "category" to "REWARD",
+                        "title" to "+$bonusCoins VC Referral Bonus!",
+                        "message" to "You joined with $referrerName's code ($extracted). +$bonusCoins VC added to your wallet!",
+                        "referenceId" to extracted,
+                        "read" to false,
+                        "createdAt" to FieldValue.serverTimestamp(),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                )
+            }.await()
+
+            Result.success(referrerName)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.WRITE, path)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun collectReferralBonus(referredUid: String): Result<Long> {
+        val path = "referrals/$referredUid"
+        return try {
+            val uid = requireUserId()
+            val referralRef = db.collection("referrals").document(referredUid)
+            val userRef = db.collection("users").document(uid)
+            val txRef = userRef.collection("wallet_transactions").document("ref_col_$referredUid")
+            val notifRef = userRef.collection("notifications").document("notif_ref_col_$referredUid")
+
+            val credited = db.runTransaction { tx ->
+                val refSnap = tx.get(referralRef)
+                val claim = refSnap.toObject(ReferralClaimEntity::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                    ?: throw IllegalStateException("Referral record not found.")
+                if (claim.referrerUid != uid) {
+                    throw IllegalStateException("This referral reward belongs to another account.")
+                }
+                if (claim.referrerRewardClaimed) {
+                    throw IllegalStateException("Referral reward already collected.")
+                }
+
+                val userSnap = tx.get(userRef)
+                val user = userSnap.toObject(UserProfile::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                    ?: throw IllegalStateException("Player wallet not ready.")
+
+                val bonus = claim.bonusCoins.coerceIn(50L, 5000L)
+                val newBalance = (user.virtualCoins + bonus).coerceAtMost(100_000_000L)
+
+                tx.update(
+                    referralRef,
+                    mapOf(
+                        "referrerRewardClaimed" to true,
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                )
+                tx.update(
+                    userRef,
+                    mapOf(
+                        "virtualCoins" to newBalance,
+                        "referralCount" to (user.referralCount + 1L),
+                        "referralEarnedCoins" to (user.referralEarnedCoins + bonus).coerceAtMost(100_000_000L),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                )
+                tx.set(
+                    txRef,
+                    mapOf(
+                        "userId" to uid,
+                        "txType" to "REFERRAL_BONUS",
+                        "amount" to bonus,
+                        "previousBalance" to user.virtualCoins,
+                        "newBalance" to newBalance,
+                        "referenceId" to referredUid.take(64),
+                        "description" to "Collected +$bonus VC referral reward (${claim.referredName})".take(220),
+                        "createdAt" to FieldValue.serverTimestamp()
+                    )
+                )
+                tx.set(
+                    notifRef,
+                    mapOf(
+                        "userId" to uid,
+                        "category" to "REWARD",
+                        "title" to "+$bonus VC Referral Collected!",
+                        "message" to "Thank you for inviting ${claim.referredName}! +$bonus VC credited to your wallet.",
+                        "referenceId" to referredUid.take(64),
+                        "read" to false,
+                        "createdAt" to FieldValue.serverTimestamp(),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                )
+                bonus
+            }.await()
+
+            Result.success(credited)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.WRITE, path)
+            Result.failure(e)
+        }
+    }
+
     companion object {
         const val SUPER_ADMIN_EMAIL = "buildolive4@gmail.com"
+        const val REFERRAL_BONUS_COINS = 500L
 
         fun sha256Hex(raw: String): String {
             val digest = MessageDigest.getInstance("SHA-256").digest(raw.toByteArray(Charsets.UTF_8))
